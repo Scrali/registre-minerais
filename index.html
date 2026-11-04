@@ -95,24 +95,25 @@
     <div class="panel-h">
       <div>
         <h2>Lire une capture d'écran</h2>
-        <div class="muted" style="font-size:14px">Capture ton inventaire en jeu, colle-la ici, vérifie les quantités lues, puis enregistre.</div>
+        <div class="muted" style="font-size:14px">Capture ton inventaire en jeu et colle-le ici, page par page s'il en a plusieurs. Vérifie les quantités lues, puis enregistre tout d'un coup.</div>
         <div class="muted" style="font-size:13px">Les minerais sont aussi reconnus à la couleur de leur caillou : renseigne la couleur de chacun avec le bouton Modifier pour que la reconnaissance soit fiable.</div>
       </div>
     </div>
     <div class="panel-b">
       <div class="capture-grid">
-        <div class="drop" id="drop" tabindex="0" role="button" aria-label="Choisir ou coller une capture d'écran">
+        <div class="drop" id="drop" tabindex="0" role="button" aria-label="Choisir ou coller une ou plusieurs captures d'écran">
           <div id="dropEmpty">
-            <div><strong>Colle ta capture</strong> avec <kbd>Ctrl</kbd>+<kbd>V</kbd></div>
-            <div class="hint">ou glisse une image ici, ou clique pour choisir un fichier</div>
+            <div><strong>Colle tes captures</strong> avec <kbd>Ctrl</kbd>+<kbd>V</kbd>, une page après l'autre</div>
+            <div class="hint">ou glisse une ou plusieurs images ici, ou clique pour choisir des fichiers</div>
             <div class="hint" style="margin-top:8px">Astuce Windows : <kbd>Win</kbd>+<kbd>Maj</kbd>+<kbd>S</kbd> pour capturer une zone de l'écran</div>
           </div>
-          <img id="preview" alt="Aperçu de la capture" hidden>
-          <input type="file" id="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+          <div id="thumbs" class="thumbs" hidden></div>
+          <div id="dropMore" class="hint" hidden>Colle (<kbd>Ctrl</kbd>+<kbd>V</kbd>) ou glisse la page suivante pour l'ajouter</div>
+          <input type="file" id="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden>
         </div>
         <div class="cap-side">
           <div>
-            <div style="font-size:13px;color:var(--muted);margin-bottom:6px">Que montre la capture ?</div>
+            <div style="font-size:13px;color:var(--muted);margin-bottom:6px">Que montrent les captures ?</div>
             <div class="seg" role="radiogroup">
               <label><input type="radio" name="capMode" id="capModeSet" value="set" checked> Le stock complet (remplace)</label>
               <label><input type="radio" name="capMode" id="capModeAdd" value="add"> Une récolte (ajoute)</label>
@@ -124,7 +125,7 @@
           </label>
           <div class="row">
             <button class="primary" id="analyze" disabled>Analyser la capture</button>
-            <button id="clearCap" hidden>Effacer</button>
+            <button id="clearCap" hidden>Tout effacer</button>
           </div>
           <div id="capMsg" class="muted"></div>
         </div>
@@ -133,7 +134,7 @@
       <div class="review" id="review" hidden>
         <div class="scroll">
           <table>
-            <thead><tr><th></th><th>Lu sur la capture</th><th>Couleur vue</th><th>Qualité</th><th>Quantité</th><th>Ressource du registre</th><th>Résultat</th></tr></thead>
+            <thead><tr><th></th><th>Page</th><th>Lu sur la capture</th><th>Couleur vue</th><th>Qualité</th><th>Quantité</th><th>Ressource du registre</th><th>Résultat</th></tr></thead>
             <tbody id="reviewBody"></tbody>
           </table>
         </div>

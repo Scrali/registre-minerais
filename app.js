@@ -10,7 +10,7 @@ const cfg = window.REGISTRE_CONFIG || {};
 const configured = /^https:\/\/.+/.test(cfg.supabaseUrl || "") && cfg.supabaseKey && !/TON-PROJET|TA-CLE/.test(cfg.supabaseUrl + cfg.supabaseKey);
 const sb = configured ? window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseKey) : null;
 
-const st = { me: null, profiles: {}, resources: [], moves: [], image: null, items: [], channel: null, recovering: false };
+const st = { me: null, profiles: {}, resources: [], moves: [], shots: [], items: [], channel: null, recovering: false };
 
 function show(view) {
   for (const id of ["authView", "recoveryView", "pendingView", "configView", "appView"]) $("#" + id).hidden = id !== view;
@@ -336,28 +336,67 @@ $("#membList").addEventListener("change", e => { if (e.target.dataset.f === "rol
 // ---------- capture ----------
 const drop = $("#drop");
 function capMsg(t, err) { const el = $("#capMsg"); el.textContent = t; el.className = err ? "err" : "muted"; }
-function setImage(file) {
-  if (!file || !file.type.startsWith("image/")) return;
-  st.image = file; st.items = []; $("#review").hidden = true;
-  const img = $("#preview"); img.src = URL.createObjectURL(file); img.hidden = false;
-  $("#dropEmpty").hidden = true; $("#clearCap").hidden = false; $("#analyze").disabled = false;
-  capMsg("Capture prête. Choisis ce qu'elle montre, puis lance l'analyse.");
+// Plusieurs captures (pages d'inventaire) : chacune est analysée séparément, les lots s'additionnent.
+const MAX_SHOTS = 12;
+let shotSeq = 0;
+function addImages(files) {
+  const imgs = [...(files || [])].filter(f => f && f.type && f.type.startsWith("image/"));
+  if (!imgs.length) return;
+  const room = MAX_SHOTS - st.shots.length;
+  for (const f of imgs.slice(0, Math.max(0, room))) st.shots.push({ id: ++shotSeq, file: f, url: URL.createObjectURL(f), status: "new", n: 0, err: "" });
+  renderShots();
+  const p = pendingShots().length;
+  if (imgs.length > room) capMsg(`${MAX_SHOTS} captures au maximum à la fois : enregistre celles-ci, puis continue.`, true);
+  else capMsg(p > 1 ? `${p} captures prêtes. Colle la page suivante ou lance l'analyse.` : "Capture prête. Colle la page suivante si l'inventaire en a plusieurs, ou lance l'analyse.");
 }
+const pendingShots = () => st.shots.filter(s => s.status === "new" || s.status === "error");
+const shotPage = id => st.shots.findIndex(s => s.id === id) + 1;
+function renderShots() {
+  const has = st.shots.length > 0;
+  $("#dropEmpty").hidden = has; $("#thumbs").hidden = !has; $("#dropMore").hidden = !has || st.shots.length >= MAX_SHOTS;
+  $("#clearCap").hidden = !has;
+  $("#thumbs").innerHTML = st.shots.map((s, i) => {
+    const state = s.status === "done" ? `<span class="ok">${s.n} lot${s.n > 1 ? "s" : ""}</span>`
+      : s.status === "busy" ? "lecture…" : s.status === "error" ? `<span class="bad" title="${esc(s.err)}">échec</span>` : "à analyser";
+    return `<div class="thumb"><img src="${s.url}" alt="Page ${i + 1}">
+      <div class="tcap"><span>Page ${i + 1}</span>${state}</div>
+      <button class="tdel" data-del="${s.id}" title="Retirer cette capture" aria-label="Retirer la page ${i + 1}" ${s.status === "busy" ? "disabled" : ""}>×</button></div>`;
+  }).join("");
+  const p = pendingShots().length, busy = st.shots.some(s => s.status === "busy");
+  $("#analyze").disabled = !p || busy;
+  const retry = p && pendingShots().every(s => s.status === "error");
+  $("#analyze").textContent = retry ? (p > 1 ? `Réessayer les ${p} captures en échec` : "Réessayer la capture en échec")
+    : p > 1 ? `Analyser les ${p} captures` : st.items.length && p ? "Analyser la nouvelle capture" : "Analyser la capture";
+}
+$("#thumbs").addEventListener("click", e => {
+  e.stopPropagation();
+  const b = e.target.closest("[data-del]"); if (!b) return;
+  const id = +b.dataset.del, s = st.shots.find(x => x.id === id);
+  if (!s || s.status === "busy") return;
+  URL.revokeObjectURL(s.url);
+  st.shots = st.shots.filter(x => x !== s);
+  st.items = st.items.filter(it => it.shot !== id);
+  if (!st.shots.length) return clearCapture();
+  renderShots();
+  if (st.items.length) renderReview(); else $("#review").hidden = true;
+});
 drop.addEventListener("click", () => $("#file").click());
 drop.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); $("#file").click(); } });
-$("#file").addEventListener("change", e => setImage(e.target.files[0]));
+$("#file").addEventListener("change", e => { addImages(e.target.files); e.target.value = ""; });
 drop.addEventListener("dragover", e => { e.preventDefault(); drop.classList.add("over"); });
 drop.addEventListener("dragleave", () => drop.classList.remove("over"));
-drop.addEventListener("drop", e => { e.preventDefault(); drop.classList.remove("over"); setImage(e.dataTransfer.files[0]); });
+drop.addEventListener("drop", e => { e.preventDefault(); drop.classList.remove("over"); addImages(e.dataTransfer.files); });
 document.addEventListener("paste", e => {
-  if ($("#appView").hidden) return;
-  const f = [...(e.clipboardData?.files || [])].find(f => f.type.startsWith("image/"));
-  if (f) { e.preventDefault(); setImage(f); drop.scrollIntoView({ block: "nearest" }); }
+  if ($("#appView").hidden || $("#stocksView").hidden) return;
+  const fs = [...(e.clipboardData?.files || [])].filter(f => f.type.startsWith("image/"));
+  if (fs.length) { e.preventDefault(); addImages(fs); drop.scrollIntoView({ block: "nearest" }); }
 });
 $("#clearCap").addEventListener("click", e => { e.stopPropagation(); clearCapture(); });
 function clearCapture() {
-  st.image = null; st.items = []; $("#preview").hidden = true; $("#dropEmpty").hidden = false;
-  $("#review").hidden = true; $("#clearCap").hidden = true; $("#analyze").disabled = true; $("#file").value = ""; capMsg("");
+  for (const s of st.shots) URL.revokeObjectURL(s.url);
+  st.shots = []; st.items = [];
+  $("#review").hidden = true; $("#file").value = ""; capMsg("");
+  renderShots();
 }
 const capMode = () => document.querySelector("input[name=capMode]:checked").value;
 document.querySelectorAll("input[name=capMode]").forEach(r => r.addEventListener("change", () => st.items.length && renderReview()));
@@ -372,34 +411,61 @@ async function toBase64Jpeg(file) {
   return c.toDataURL("image/jpeg", 0.9).split(",")[1];
 }
 
+async function analyzeShot(s) {
+  const image = await toBase64Jpeg(s.file);
+  const { data, error } = await sb.functions.invoke("analyze-capture", { body: { image, media_type: "image/jpeg" } });
+  if (error) {
+    let msg = "L'analyse a échoué. Réessaie dans un instant.";
+    try { msg = (await error.context.json()).error || msg; } catch (_) {}
+    throw new Error(msg);
+  }
+  return (Array.isArray(data?.items) ? data.items : []).filter(i => i && i.name).map(i => ({
+    name: String(i.name).trim(), quality: qKey(i.quality) === "-" ? "" : qKey(i.quality), qty: i.qty == null ? 1 : num(i.qty),
+    unit: String(i.unit || "").trim(), color: String(i.color || "").trim(), hex: okHex(String(i.hex || "").trim()), by: String(i.by || ""),
+    on: true, target: matchTarget(String(i.name)), shot: s.id,
+    // Lots lus comme le même caillou (même nom ou même couleur) : renommer l'un renomme les autres, sur toutes les pages.
+    group: norm(i.name),
+  }));
+}
+
 $("#analyze").addEventListener("click", async () => {
-  if (!st.image) return;
-  $("#analyze").disabled = true;
-  capMsg("Lecture de la capture en cours… (10 à 60 secondes)");
-  try {
-    const image = await toBase64Jpeg(st.image);
-    const { data, error } = await sb.functions.invoke("analyze-capture", { body: { image, media_type: "image/jpeg" } });
-    if (error) {
-      let msg = "L'analyse a échoué. Réessaie dans un instant.";
-      try { msg = (await error.context.json()).error || msg; } catch (_) {}
-      throw new Error(msg);
+  const todo = pendingShots(); if (!todo.length) return;
+  for (const s of todo) { s.status = "busy"; s.err = ""; }
+  renderShots();
+  let left = todo.length;
+  capMsg(`Lecture de ${todo.length > 1 ? todo.length + " captures" : "la capture"} en cours… (10 à 60 secondes)`);
+  const queue = todo.slice();
+  const worker = async () => { // 3 analyses en parallèle au plus
+    for (let s; (s = queue.shift());) {
+      try {
+        const items = await analyzeShot(s);
+        if (!st.shots.includes(s)) continue; // tout effacé entre-temps
+        // Un nom déjà corrigé sur une page précédente s'applique aux nouvelles pages.
+        for (const it of items) {
+          const prev = st.items.find(x => x.group === it.group);
+          if (prev) { it.name = prev.name; it.target = prev.target; }
+        }
+        st.items.push(...items);
+        s.status = "done"; s.n = items.length;
+      } catch (err) { s.status = "error"; s.err = errText(err); }
+      left--;
+      if (left) capMsg(`Lecture en cours… encore ${left} capture${left > 1 ? "s" : ""}.`);
+      renderShots();
+      if (st.items.length) { st.items.sort((a, b) => shotPage(a.shot) - shotPage(b.shot)); renderReview(); }
     }
-    const items = (Array.isArray(data?.items) ? data.items : []).filter(i => i && i.name).map(i => ({
-      name: String(i.name).trim(), quality: qKey(i.quality) === "-" ? "" : qKey(i.quality), qty: i.qty == null ? 1 : num(i.qty),
-      unit: String(i.unit || "").trim(), color: String(i.color || "").trim(), hex: okHex(String(i.hex || "").trim()), by: String(i.by || ""),
-      on: true, target: matchTarget(String(i.name)),
-      // Lots lus comme le même caillou (même nom ou même couleur) : renommer l'un renomme les autres.
-      group: norm(i.name),
-    }));
-    st.items = items;
-    if (!items.length) { capMsg("Aucune ressource lue sur cette capture. Essaie une capture plus nette ou recadrée sur l'inventaire.", true); $("#review").hidden = true; }
-    else {
-      const kinds = new Set(items.map(i => norm(i.name))).size;
-      capMsg(`${items.length} lot${items.length > 1 ? "s" : ""} lu${items.length > 1 ? "s" : ""}, ${kinds} minerai${kinds > 1 ? "s" : ""}. Vérifie les valeurs avant d'enregistrer.`);
-      renderReview();
-    }
-  } catch (err) { capMsg(errText(err), true); }
-  $("#analyze").disabled = !st.image;
+  };
+  await Promise.all([worker(), worker(), worker()]);
+  const failed = st.shots.filter(s => s.status === "error");
+  if (!st.items.length) {
+    $("#review").hidden = true;
+    capMsg(failed.length ? failed[0].err : "Aucune ressource lue. Essaie une capture plus nette ou recadrée sur l'inventaire.", true);
+  } else {
+    const kinds = new Set(st.items.map(i => norm(i.name))).size, pages = st.shots.filter(s => s.status === "done").length;
+    let msg = `${st.items.length} lot${st.items.length > 1 ? "s" : ""} lu${st.items.length > 1 ? "s" : ""} sur ${pages} page${pages > 1 ? "s" : ""}, ${kinds} minerai${kinds > 1 ? "s" : ""}. Vérifie les valeurs avant d'enregistrer.`;
+    if (failed.length) msg += ` ${failed.length} capture${failed.length > 1 ? "s ont" : " a"} échoué : relance l'analyse pour réessayer.`;
+    capMsg(msg, failed.length > 0);
+  }
+  renderShots();
 });
 
 function matchTarget(name) {
@@ -439,6 +505,7 @@ function renderReview() {
     const unit = r ? r.unit : it.unit;
     return `<tr data-i="${i}">
       <td><input type="checkbox" data-f="on" id="rv-on-${i}" ${it.on ? "checked" : ""} aria-label="Inclure cette ligne"></td>
+      <td class="pg">p. ${shotPage(it.shot) || "–"}</td>
       <td><input type="text" data-f="name" id="rv-name-${i}" value="${esc(it.name)}"></td>
       <td><div style="display:flex;align-items:center;min-width:130px">${swatch(it.hex, it.color)}<span class="colordesc">${esc(it.color || "–")}${it.by === "couleur" ? "<br>reconnu par la couleur" : ""}${linked}</span></div></td>
       <td><input type="number" class="qin" step="1" min="0" max="1000" placeholder="?" data-f="quality" id="rv-q-${i}" value="${esc(it.quality)}" aria-label="Qualité"></td>
