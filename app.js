@@ -44,6 +44,57 @@ function mergeLots(base, delta, mode) {
   }
   return clean(o);
 }
+// Stations et villes de Star Citizen proposées (on peut aussi taper n'importe quel autre lieu).
+const GAME_PLACES = [
+  ["Lorville", "Stanton · Hurston"], ["Everus Harbor", "Stanton · Hurston"],
+  ["Area18", "Stanton · ArcCorp"], ["Baijini Point", "Stanton · ArcCorp"],
+  ["New Babbage", "Stanton · microTech"], ["Port Tressler", "Stanton · microTech"],
+  ["Orison", "Stanton · Crusader"], ["Seraphim Station", "Stanton · Crusader"],
+  ["Grim HEX", "Stanton · Yela"],
+  ["HUR-L1 Green Glade Station", "Stanton · Lagrange"], ["HUR-L2 Faithful Dream Station", "Stanton · Lagrange"],
+  ["HUR-L3 Thundering Express Station", "Stanton · Lagrange"], ["HUR-L4 Melodic Fields Station", "Stanton · Lagrange"],
+  ["HUR-L5 High Course Station", "Stanton · Lagrange"],
+  ["CRU-L1 Ambitious Dream Station", "Stanton · Lagrange"], ["CRU-L4 Shallow Fields Station", "Stanton · Lagrange"],
+  ["CRU-L5 Beautiful Glen Station", "Stanton · Lagrange"],
+  ["ARC-L1 Wide Forest Station", "Stanton · Lagrange"], ["ARC-L2 Lively Pathway Station", "Stanton · Lagrange"],
+  ["ARC-L3 Modern Express Station", "Stanton · Lagrange"], ["ARC-L4 Faint Glen Station", "Stanton · Lagrange"],
+  ["ARC-L5 Yellow Core Station", "Stanton · Lagrange"],
+  ["MIC-L1 Shallow Frontier Station", "Stanton · Lagrange"], ["MIC-L2 Long Forest Station", "Stanton · Lagrange"],
+  ["MIC-L3 Endless Odyssey Station", "Stanton · Lagrange"], ["MIC-L4 Red Crossroads Station", "Stanton · Lagrange"],
+  ["MIC-L5 Modern Icarus Station", "Stanton · Lagrange"],
+  ["Stanton Gateway", "Stanton · porte de saut"], ["Pyro Gateway", "Pyro · porte de saut"],
+  ["Ruin Station", "Pyro"], ["Checkmate", "Pyro"], ["Orbituary", "Pyro"], ["Starlight Service Station", "Pyro"],
+  ["Patch City", "Pyro"], ["Gaslight", "Pyro"], ["Rod's Fuel 'N Supplies", "Pyro"], ["Rat's Nest", "Pyro"],
+  ["Endgame", "Pyro"], ["Dudley & Daughters", "Pyro"], ["Megumi Refueling", "Pyro"],
+  ["Levski", "Nyx · Delamar"],
+];
+
+// ---------- lieux de stockage : places ={ "Lorville": { "258": 20 }, "": { … } } ("" = non précisé) ----------
+const NO_PLACE = "Lieu non précisé";
+const placeLabel = k => k || NO_PLACE;
+function placesOf(r) {
+  const p = r && r.places && typeof r.places === "object" ? r.places : null;
+  if (!p || !Object.keys(p).length) { const l = lotsOf(r); return sumLots(l) ? { "": l } : {}; }
+  const o = {};
+  for (const k in p) { const l = lotsOf({ lots: p[k] }); if (sumLots(l)) o[k] = l; }
+  return o;
+}
+const placeKeys = p => Object.keys(p).sort((a, b) => (a === "") - (b === "") || a.localeCompare(b));
+const usedPlaces = () => [...new Set(st.resources.flatMap(r => Object.keys(placesOf(r))).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+// Texte éditable : un bloc par lieu, « [Lorville] » puis une ligne par lot. Sans en-tête = lieu non précisé.
+function placesToText(p) {
+  return placeKeys(p).map(k => (k ? `[${k}]\n` : "") + lotsToLines(p[k])).join("\n");
+}
+function parsePlaces(txt) {
+  const o = {}; let cur = "";
+  for (const line of String(txt).split(/\n/)) {
+    const h = line.match(/^\s*\[(.*)\]\s*$/);
+    if (h) { cur = h[1].trim(); continue; }
+    const l = parseLots(line);
+    if (sumLots(l)) o[cur] = mergeLots(o[cur] || {}, l, "add");
+  }
+  return o;
+}
 function avgQ(l) {
   let s = 0, n = 0; for (const [k, v] of Object.entries(l)) if (k !== "-") { s += +k * v; n += v; }
   return n ? Math.round(s / n) : null;
@@ -179,10 +230,11 @@ async function rpc(name, args) {
   if (error) throw error;
   return data;
 }
-const applyLots = (r, mode, delta, source, note, patch) =>
-  rpc("apply_lots", { p_id: r.id, p_mode: mode, p_delta: delta, p_source: source, p_note: note || "", p_patch: patch || null });
+const applyLots = (r, mode, delta, source, note, patch, place) =>
+  rpc("apply_lots", { p_id: r.id, p_mode: mode, p_delta: delta, p_source: source, p_note: note || "", p_patch: patch || null, p_place: place || "" });
 const createResource = (v, source, note) =>
-  rpc("create_resource", { p: { name: v.name, category: v.category || "", unit: v.unit || "", color: okHex(v.color), color_name: v.color_name || "", threshold: v.threshold || 0, lots: clean({ ...(v.lots || {}) }) }, p_source: source, p_note: note || "" });
+  rpc("create_resource", { p: { name: v.name, category: v.category || "", unit: v.unit || "", color: okHex(v.color), color_name: v.color_name || "", threshold: v.threshold || 0,
+    ...(v.places ? { places: v.places } : { lots: clean({ ...(v.lots || {}) }), place: v.place || "" }) }, p_source: source, p_note: note || "" });
 
 // ---------- stock ----------
 const isLow = r => r.threshold > 0 && num(r.qty) < r.threshold;
@@ -193,8 +245,24 @@ function filtered() {
     .sort((a, b) => (a.category || "").localeCompare(b.category || "") || a.name.localeCompare(b.name));
 }
 
+function renderPlaceLists() {
+  const used = usedPlaces(), known = new Set(GAME_PLACES.map(p => p[0]));
+  $("#placeList").innerHTML = used.filter(p => !known.has(p)).map(p => `<option value="${esc(p)}" label="Utilisé dans le registre">`).join("")
+    + GAME_PLACES.map(([n, w]) => `<option value="${esc(n)}" label="${esc(w)}">`).join("");
+  const sel = $("#placeF"), cur = sel.value;
+  const hasNone = st.resources.some(r => placesOf(r)[""]);
+  sel.innerHTML = '<option value="*">Tous les lieux</option>' + used.map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join("")
+    + (hasNone ? `<option value="">${NO_PLACE}</option>` : "");
+  sel.value = [...sel.options].some(o => o.value === cur) ? cur : "*";
+}
+// Lots affichés : ceux du lieu filtré, ou le total.
+const viewPlace = () => $("#placeF").value;
+function viewLots(r) { const p = viewPlace(); return p === "*" ? lotsOf(r) : (placesOf(r)[p] || {}); }
+
 function renderStock() {
-  const rows = filtered();
+  renderPlaceLists();
+  const vp = viewPlace();
+  const rows = filtered().filter(r => vp === "*" || placesOf(r)[vp]);
   $("#stockEmpty").hidden = st.resources.length > 0;
   $("#stCount").textContent = st.resources.length;
   $("#stTotal").textContent = fmt(st.resources.reduce((s, r) => s + num(r.qty), 0));
@@ -208,7 +276,10 @@ function renderStock() {
   $("#catList").innerHTML = cats.map(c => `<option value="${esc(c)}">`).join("");
 
   $("#stockBody").innerHTML = rows.map(r => {
-    const low = isLow(r), q = num(r.qty), l = lotsOf(r), aq = avgQ(l);
+    const l = viewLots(r), q = vp === "*" ? num(r.qty) : sumLots(l), low = isLow(r), aq = avgQ(l);
+    const pl = placesOf(r), pks = placeKeys(pl);
+    const where = vp === "*" && pks.length && !(pks.length === 1 && pks[0] === "")
+      ? `<div class="where">${pks.map(k => `<span title="${esc(lotsText(pl[k]))}">${esc(placeLabel(k))} <b>${fmt(sumLots(pl[k]))}</b></span>`).join("")}</div>` : "";
     const qs = Object.keys(l).filter(k => k !== "-").map(Number);
     const nl = Object.keys(l).length;
     const qual = aq == null ? '<span class="muted">–</span>'
@@ -217,7 +288,7 @@ function renderStock() {
     const pill = r.threshold > 0 ? (low ? '<span class="pill low">Bas</span>' : '<span class="pill ok">OK</span>') : '<span class="pill none">Sans seuil</span>';
     return `<tr class="${low ? "low" : ""}" data-id="${esc(r.id)}">
       <td>${okImg(r.image) ? `<img class="rimg" src="${esc(r.image)}" alt="" title="${esc(r.color_name || r.name)}">` : swatch(r.color)}<span class="res-name">${esc(r.name)}</span>${r.category ? `<span class="chip">${esc(r.category)}</span>` : ""}${r.color_name ? `<div class="colordesc">${esc(r.color_name)}</div>` : ""}</td>
-      <td><div class="qty">${fmt(q)}<small>${esc(r.unit)}</small></div>${r.threshold > 0 ? `<div class="gauge" title="Seuil : ${fmt(r.threshold)}"><i style="width:${pct}%"></i></div>` : ""}</td>
+      <td><div class="qty">${fmt(q)}<small>${esc(r.unit)}</small></div>${vp !== "*" ? `<div class="colordesc">sur ${fmt(r.qty)} au total</div>` : ""}${where}${r.threshold > 0 && vp === "*" ?`<div class="gauge" title="Seuil : ${fmt(r.threshold)}"><i style="width:${pct}%"></i></div>` : ""}</td>
       <td>${qual}${lotChips(l)}</td>
       <td>${pill}</td>
       <td><div class="quick"><input type="number" class="qin" step="1" min="0" max="1000" placeholder="Q" id="qq-${esc(r.id)}" aria-label="Qualité (facultatif)"><input type="number" step="any" min="0" placeholder="qté" id="qk-${esc(r.id)}" aria-label="Quantité à ajouter ou retirer">
@@ -234,13 +305,21 @@ $("#stockBody").addEventListener("click", async e => {
   if (b.dataset.act === "edit") return openDialog(r);
   const inp = document.getElementById("qk-" + id), qin = document.getElementById("qq-" + id), amt = num(inp.value);
   if (amt <= 0) { inp.focus(); return; }
+  // Lieu du mouvement : le lieu filtré, sinon le seul lieu de la ressource.
+  let place = viewPlace();
+  if (place === "*") {
+    const ks = Object.keys(placesOf(r));
+    if (ks.length > 1) { setStatus(`« ${r.name} » est stocké dans plusieurs lieux : choisis le lieu dans le filtre au-dessus du tableau, puis recommence.`); $("#placeF").focus(); return; }
+    place = ks[0] || $("#capPlace").value.trim();
+  }
   b.disabled = true;
-  try { await applyLots(r, b.dataset.act, { [qKey(qin.value)]: amt }, "manuel", ""); inp.value = ""; qin.value = ""; }
+  try { await applyLots(r, b.dataset.act, { [qKey(qin.value)]: amt }, "manuel", "", null, place); inp.value = ""; qin.value = ""; setStatus(""); }
   catch (err) { setStatus(errText(err)); }
   b.disabled = false;
 });
 $("#q").addEventListener("input", renderStock);
 $("#cat").addEventListener("change", renderStock);
+$("#placeF").addEventListener("change", renderStock);
 
 // ---------- fiche ressource ----------
 const dlg = $("#dlg");
@@ -251,7 +330,7 @@ function openDialog(r) {
   $("#fName").value = r ? r.name : "";
   $("#fCat").value = r ? r.category || "" : "";
   $("#fUnit").value = r ? r.unit || "" : "";
-  $("#fLots").value = r ? lotsToLines(lotsOf(r)) : "";
+  $("#fLots").value = r ? placesToText(placesOf(r)) : ($("#capPlace").value.trim() ? `[${$("#capPlace").value.trim()}]\n` : "");
   $("#fMin").value = r && r.threshold ? r.threshold : "";
   $("#fColor").value = (r && okHex(r.color)) || "#888888";
   $("#fColor").dataset.touched = r && okHex(r.color) ? "1" : "";
@@ -272,7 +351,7 @@ $("#resForm").addEventListener("submit", async e => {
   e.preventDefault();
   const v = {
     name: $("#fName").value.trim(), category: $("#fCat").value.trim(), unit: $("#fUnit").value.trim(),
-    lots: parseLots($("#fLots").value), threshold: num($("#fMin").value),
+    places: parsePlaces($("#fLots").value), threshold: num($("#fMin").value),
     color: $("#fColor").dataset.touched ? $("#fColor").value : "", color_name: $("#fColorName").value.trim(),
   };
   if (!v.name) return;
@@ -280,7 +359,7 @@ $("#resForm").addEventListener("submit", async e => {
   if (!r && st.resources.some(x => norm(x.name) === norm(v.name))) { $("#fName").setCustomValidity("Cette ressource existe déjà."); $("#fName").reportValidity(); $("#fName").setCustomValidity(""); return; }
   $("#fSave").disabled = true;
   try {
-    if (r) await applyLots(r, "set", v.lots, "correction", "", { name: v.name, category: v.category, unit: v.unit, threshold: v.threshold, color: okHex(v.color), color_name: v.color_name });
+    if (r) await applyLots(r, "places", v.places, "correction", "", { name: v.name, category: v.category, unit: v.unit, threshold: v.threshold, color: okHex(v.color), color_name: v.color_name });
     else await createResource(v, "manuel", "");
     dlg.close();
   } catch (err) { dlg.close(); setStatus(errText(err)); }
@@ -303,7 +382,7 @@ function renderLog() {
     const cls = d > 0 ? "up" : d < 0 ? "down" : "";
     const who = (st.profiles[m.by] && st.profiles[m.by].pseudo) || "Un membre";
     return `<li><div><span class="d ${cls}">${d > 0 ? "+" : ""}${fmt(d)} ${esc(m.unit)}</span> · <strong>${esc(m.name)}</strong></div>
-      <div class="meta"><span class="num">${fmt(m.before)} → ${fmt(m.after)}</span> · ${modeLabel[m.mode] || esc(m.mode)}${m.source === "capture" ? " par capture" : ""}${m.note ? " · " + esc(m.note) : ""}</div>
+      <div class="meta"><span class="num">${fmt(m.before)} → ${fmt(m.after)}</span> · ${modeLabel[m.mode] || esc(m.mode)}${m.source === "capture" ? " par capture" : ""}${m.place ? " · " + esc(m.place) : ""}${m.note ? " · " + esc(m.note) : ""}</div>
       ${m.detail ? `<div class="meta num">${esc(m.detail)}</div>` : ""}
       <div class="meta">${esc(who)} · ${ago(m.at)}</div></li>`;
   }).join("");
@@ -400,6 +479,12 @@ function clearCapture() {
   $("#review").hidden = true; $("#file").value = ""; capMsg("");
   renderShots();
 }
+// Lieu de la capture, mémorisé d'une visite à l'autre.
+try { $("#capPlace").value = localStorage.getItem("registre.place") || ""; } catch (_) {}
+$("#capPlace").addEventListener("change", e => {
+  try { localStorage.setItem("registre.place", e.target.value.trim()); } catch (_) {}
+  if (st.items.length) renderReview();
+});
 const capMode = () => document.querySelector("input[name=capMode]:checked").value;
 document.querySelectorAll("input[name=capMode]").forEach(r => r.addEventListener("change", () => st.items.length && renderReview()));
 
@@ -527,7 +612,9 @@ function renderReview() {
     if (!r && it.target !== "new") it.target = "new";
     const g = groups.get(r ? r.id : "new:" + norm(it.name));
     const before = r ? num(r.qty) : 0;
-    const after = !it.on || !g ? before : r ? sumLots(mergeLots(lotsOf(r), g.lots, mode)) : (mode === "remove" ? 0 : sumLots(g.lots));
+    // Seul le stock du lieu choisi change ; le résultat affiché est le total de la ressource.
+    const here = r ? (placesOf(r)[$("#capPlace").value.trim()] || {}) : {};
+    const after = !it.on || !g ? before : r ? before - sumLots(here) + sumLots(mergeLots(here, g.lots, mode)) : (mode === "remove" ? 0 : sumLots(g.lots));
     const unit = r ? r.unit : it.unit;
     return `<tr data-i="${i}">
       <td><input type="checkbox" data-f="on" id="rv-on-${i}" ${it.on ? "checked" : ""} aria-label="Inclure cette ligne"></td>
@@ -581,22 +668,22 @@ $("#reviewBody").addEventListener("change", e => {
 });
 
 $("#commit").addEventListener("click", async () => {
-  const mode = capMode(), note = $("#capNote").value.trim();
+  const mode = capMode(), note = $("#capNote").value.trim(), place = $("#capPlace").value.trim();
   const todo = [...groupItems().values()];
   $("#commit").disabled = true;
   let done = 0;
   try {
     for (const { r, it, lots, crop } of todo) {
       let id = r && r.id;
-      if (r) await applyLots(r, mode, lots, "capture", note);
-      else id = await createResource({ name: it.name, unit: it.unit, lots: mode === "remove" ? {} : lots, color: it.hex, color_name: it.color }, "capture", note);
+      if (r) await applyLots(r, mode, lots, "capture", note, null, place);
+      else id = await createResource({ name: it.name, unit: it.unit, lots: mode === "remove" ? {} : lots, place, color: it.hex, color_name: it.color }, "capture", note);
       // Première image du caillou pour cette ressource (une image existante n'est pas remplacée).
       if (id && crop && !(r && okImg(r.image))) await rpc("set_resource_image", { p_id: id, p_image: crop }).catch(err => console.warn(err));
       done++; $("#commitMsg").textContent = `${done} / ${todo.length}`;
     }
     $("#commitMsg").textContent = "";
     clearCapture(); $("#capNote").value = "";
-    capMsg(`${done} ressource${done > 1 ? "s mises" : " mise"} à jour dans le registre.`);
+    capMsg(`${done} ressource${done > 1 ? "s mises" : " mise"} à jour dans le registre (${placeLabel(place)}).`);
   } catch (err) {
     setStatus(errText(err));
     $("#commitMsg").textContent = `${done} / ${todo.length} enregistrées avant l'erreur.`;
@@ -617,7 +704,7 @@ $("#appTabs").addEventListener("click", e => { const b = e.target.closest("butto
 // écrasée par les mises à jour en temps réel des autres membres.
 const dirty = new Set();
 function dbRow(r) {
-  const l = lotsOf(r);
+  const txt = placesToText(placesOf(r));
   return `<tr data-id="${esc(r.id)}">
     <td><input type="color" class="e-color" id="e-color-${esc(r.id)}" value="${okHex(r.color) || "#888888"}" data-had="${okHex(r.color) ? 1 : ""}" aria-label="Couleur de ${esc(r.name)}">
         ${r.image ? `<div class="dbimg"><img class="rimg" src="${esc(r.image)}" alt=""><button type="button" class="linkbtn" data-act="noimg" title="La prochaine capture enregistrée fournira une nouvelle image">Effacer l'image</button></div>` : ""}</td>
@@ -626,7 +713,7 @@ function dbRow(r) {
     <td><input type="text" class="e-cat" id="e-cat-${esc(r.id)}" value="${esc(r.category)}" list="catList" aria-label="Catégorie"></td>
     <td><input type="text" class="e-unit" id="e-unit-${esc(r.id)}" value="${esc(r.unit)}" aria-label="Unité" style="max-width:80px"></td>
     <td><input type="number" class="e-min" id="e-min-${esc(r.id)}" value="${r.threshold > 0 ? r.threshold : ""}" min="0" step="any" placeholder="aucun" aria-label="Seuil"></td>
-    <td><textarea class="e-lots" id="e-lots-${esc(r.id)}" rows="${Math.min(6, Math.max(2, Object.keys(l).length))}" aria-label="Lots">${esc(lotsToLines(l))}</textarea></td>
+    <td><textarea class="e-lots" id="e-lots-${esc(r.id)}" rows="${Math.min(8, Math.max(2, txt.split("\n").length))}" aria-label="Lots par lieu" placeholder="[Lorville]&#10;258 x 20">${esc(txt)}</textarea></td>
     <td class="num">${fmt(r.qty)}</td>
     <td><div class="acts"><button type="button" class="primary" data-act="save" disabled>Enregistrer</button><button type="button" class="danger" data-act="del">Supprimer</button></div></td>
   </tr>`;
@@ -687,7 +774,7 @@ $("#dbBody").addEventListener("click", async e => {
   const color = v(".e-color");
   b.disabled = true;
   try {
-    await applyLots(r, "set", parseLots(v(".e-lots").value), "correction", "", {
+    await applyLots(r, "places", parsePlaces(v(".e-lots").value), "correction", "", {
       name, category: v(".e-cat").value.trim(), unit: v(".e-unit").value.trim(), threshold: num(v(".e-min").value),
       color: color.dataset.touched || color.dataset.had ? color.value : "", color_name: v(".e-colorname").value.trim(),
     });
@@ -750,7 +837,7 @@ function renderHistory() {
     const when = new Date(m.at).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" });
     const act = m.undone_at ? '<span class="tag">Annulé</span>' : canUndo(m) ? `<button type="button" data-undo="${m.id}">Annuler</button>` : "";
     return `<tr class="${m.undone_at ? "undone" : ""}">
-      <td class="num" style="white-space:nowrap">${when}</td><td>${esc(who)}</td><td><strong>${esc(m.name)}</strong></td>
+      <td class="num" style="white-space:nowrap">${when}</td><td>${esc(who)}</td><td><strong>${esc(m.name)}</strong>${m.place ? `<br><span class="muted" style="font-size:12px">${esc(m.place)}</span>` : ""}</td>
       <td><span class="tag">${modeLabel[m.mode] || esc(m.mode)}</span>${m.source === "capture" ? '<br><span class="muted" style="font-size:12px">par capture</span>' : ""}</td>
       <td class="num" style="white-space:nowrap">${fmt(m.before)} → ${fmt(m.after)} <span class="${d > 0 ? "up" : d < 0 ? "down" : ""}">(${d > 0 ? "+" : ""}${fmt(d)})</span></td>
       <td class="num" style="font-size:12px">${esc(m.detail)}</td><td style="font-size:13px">${esc(m.note)}</td><td>${act}</td></tr>`;
@@ -789,10 +876,13 @@ async function allMovements() {
   }
 }
 $("#expStock").addEventListener("click", () => {
-  const rows = [["Ressource", "Catégorie", "Unité", "Quantité", "Qualité moyenne", "Lots", "Seuil", "Couleur", "Description couleur"]];
+  const rows = [["Ressource", "Lieu", "Catégorie", "Unité", "Quantité", "Qualité moyenne", "Lots", "Seuil", "Couleur", "Description couleur"]];
   for (const r of st.resources.slice().sort((a, b) => a.name.localeCompare(b.name))) {
-    const l = lotsOf(r);
-    rows.push([r.name, r.category, r.unit, frNum(r.qty), avgQ(l) ?? "", lotsText(l), r.threshold ? frNum(r.threshold) : "", r.color, r.color_name]);
+    const pl = placesOf(r);
+    for (const k of placeKeys(pl)) {
+      const l = pl[k];
+      rows.push([r.name, placeLabel(k), r.category, r.unit, frNum(sumLots(l)), avgQ(l) ?? "", lotsText(l), r.threshold ? frNum(r.threshold) : "", r.color, r.color_name]);
+    }
   }
   download(`stocks-${today()}.csv`, csv(rows), "text/csv;charset=utf-8");
 });
@@ -807,17 +897,20 @@ $("#expLog").addEventListener("click", async e => {
   } catch (err) { setStatus(errText(err)); }
   b.disabled = false;
 });
+async function backupJson() {
+  const { data: resources, error } = await sb.from("resources").select("*").order("name");
+  if (error) throw error;
+  const backup = {
+    exported_at: new Date().toISOString(),
+    resources,
+    movements: await allMovements(),
+    profiles: Object.values(st.profiles).map(p => ({ id: p.id, pseudo: p.pseudo, role: p.role, created_at: p.created_at })),
+  };
+  download(`sauvegarde-registre-${today()}.json`, JSON.stringify(backup, null, 2), "application/json");
+}
 $("#expJson").addEventListener("click", async e => {
   const b = e.currentTarget; b.disabled = true;
-  try {
-    const backup = {
-      exported_at: new Date().toISOString(),
-      resources: st.resources,
-      movements: await allMovements(),
-      profiles: Object.values(st.profiles).map(p => ({ id: p.id, pseudo: p.pseudo, role: p.role, created_at: p.created_at })),
-    };
-    download(`sauvegarde-registre-${today()}.json`, JSON.stringify(backup, null, 2), "application/json");
-  } catch (err) { setStatus(errText(err)); }
+  try { await backupJson(); } catch (err) { setStatus(errText(err)); }
   b.disabled = false;
 });
 
@@ -829,3 +922,19 @@ else {
     if (event === "SIGNED_IN" || event === "SIGNED_OUT" || event === "INITIAL_SESSION" || event === "USER_UPDATED") setTimeout(() => enter(session), 0);
   });
 }
+
+// ---------- réinitialisation complète (administrateurs) ----------
+$("#rstConfirm").addEventListener("input", e => { $("#rstGo").disabled = e.target.value.trim() !== "REINITIALISER"; });
+$("#rstGo").addEventListener("click", async () => {
+  const b = $("#rstGo"), m = $("#rstMsg");
+  if (!b.classList.contains("armed")) { b.classList.add("armed"); b.textContent = "Confirmer : tout effacer"; return; }
+  b.disabled = true; m.className = "formmsg"; m.textContent = "Téléchargement de la sauvegarde…";
+  try {
+    await backupJson();
+    await rpc("reset_registre", { p_confirm: "REINITIALISER" });
+    dirty.clear(); $("#rstConfirm").value = "";
+    m.textContent = "Base réinitialisée. La sauvegarde a été téléchargée."; m.className = "formmsg ok";
+    await Promise.all([loadResources(), loadMoves()]); loadHistory(true);
+  } catch (err) { m.textContent = errText(err); m.className = "formmsg err"; b.disabled = false; }
+  b.classList.remove("armed"); b.textContent = "Tout effacer"; b.disabled = $("#rstConfirm").value.trim() !== "REINITIALISER";
+});

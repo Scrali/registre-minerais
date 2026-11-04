@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="style.css?v=5">
+<link rel="stylesheet" href="style.css?v=6">
 </head>
 <body>
 
@@ -115,11 +115,15 @@
           <div>
             <div style="font-size:13px;color:var(--muted);margin-bottom:6px">Que montrent les captures ?</div>
             <div class="seg" role="radiogroup">
-              <label><input type="radio" name="capMode" id="capModeSet" value="set" checked> Le stock complet (remplace)</label>
+              <label><input type="radio" name="capMode" id="capModeSet" value="set" checked> Le stock complet du lieu (remplace)</label>
               <label><input type="radio" name="capMode" id="capModeAdd" value="add"> Une récolte (ajoute)</label>
               <label><input type="radio" name="capMode" id="capModeRemove" value="remove"> Une sortie (retire)</label>
             </div>
           </div>
+          <label>Lieu de stockage
+            <input type="text" id="capPlace" list="placeList" maxlength="80" placeholder="Choisis ou tape une station, une ville…" autocomplete="off">
+            <span style="font-size:12px">Les lots enregistrés vont dans ce lieu. « Stock complet » ne remplace que le stock de ce lieu.</span>
+          </label>
           <label>Note (facultatif)
             <input type="text" id="capNote" placeholder="ex. Soute du cargo, entrepôt principal">
           </label>
@@ -134,7 +138,7 @@
       <div class="review" id="review" hidden>
         <div class="scroll">
           <table>
-            <thead><tr><th></th><th>Page</th><th>Lu sur la capture</th><th>Couleur vue</th><th>Qualité</th><th>Quantité</th><th>Ressource du registre</th><th>Résultat</th></tr></thead>
+            <thead><tr><th></th><th>Page</th><th>Lu sur la capture</th><th>Couleur vue</th><th>Qualité</th><th>Quantité</th><th>Ressource du registre</th><th>Résultat (total)</th></tr></thead>
             <tbody id="reviewBody"></tbody>
           </table>
         </div>
@@ -153,6 +157,7 @@
         <div class="filters">
           <input type="search" id="q" placeholder="Rechercher…" aria-label="Rechercher une ressource">
           <select id="cat" aria-label="Filtrer par catégorie"><option value="">Toutes catégories</option></select>
+          <select id="placeF" aria-label="Filtrer par lieu"><option value="*">Tous les lieux</option></select>
           <button class="primary" id="addRes">Ajouter une ressource</button>
         </div>
       </div>
@@ -196,13 +201,13 @@
       <div class="panel-h">
         <div>
           <h2>Ressources</h2>
-          <div class="muted" style="font-size:14px">Modifie directement une ligne, puis clique sur Enregistrer. Lots : une ligne par qualité, ex. <span class="num">258 x 20</span>.</div>
+          <div class="muted" style="font-size:14px">Modifie directement une ligne, puis clique sur Enregistrer. Lots : une ligne par qualité, ex. <span class="num">258 x 20</span>, sous le nom du lieu entre crochets, ex. <span class="num">[Lorville]</span>.</div>
         </div>
         <input type="search" id="dbQ" placeholder="Rechercher…" aria-label="Rechercher une ressource">
       </div>
       <div class="scroll">
         <table class="dbtable">
-          <thead><tr><th>Couleur</th><th>Nom et description</th><th>Catégorie</th><th>Unité</th><th>Seuil</th><th>Lots (qualité x quantité)</th><th>Total</th><th></th></tr></thead>
+          <thead><tr><th>Couleur</th><th>Nom et description</th><th>Catégorie</th><th>Unité</th><th>Seuil</th><th>Lots par lieu</th><th>Total</th><th></th></tr></thead>
           <tbody id="dbBody"></tbody>
         </table>
       </div>
@@ -250,6 +255,20 @@
         <span class="muted" id="hCount" style="font-size:14px"></span>
       </div>
     </section>
+
+    <section class="panel danger-zone">
+      <div class="panel-h">
+        <div>
+          <h2>Réinitialiser la base</h2>
+          <div class="muted" style="font-size:14px">Efface <strong>toutes les ressources et tout le journal</strong>. Les comptes des membres sont conservés. Une sauvegarde JSON est téléchargée juste avant, pour pouvoir revenir en arrière. Action irréversible.</div>
+        </div>
+      </div>
+      <div class="panel-b merge">
+        <label>Tape <span class="num">REINITIALISER</span> pour confirmer<input type="text" id="rstConfirm" autocomplete="off" spellcheck="false"></label>
+        <button type="button" class="danger" id="rstGo" disabled>Tout effacer</button>
+        <div class="formmsg" id="rstMsg" style="flex-basis:100%"></div>
+      </div>
+    </section>
   </div>
 </div>
 
@@ -262,9 +281,9 @@
       <label>Catégorie<input type="text" id="fCat" list="catList" placeholder="ex. Minerai brut"></label>
       <label>Unité<input type="text" id="fUnit" placeholder="ex. SCU"></label>
     </div>
-    <label>Lots en stock
-      <textarea id="fLots" rows="4" placeholder="Une ligne par lot : qualité x quantité&#10;258 x 20&#10;1000 x 6"></textarea>
-      <span style="font-size:12px">Une ligne par qualité : <span class="num">258 x 20</span> = 20 unités de qualité 258. Un nombre seul = quantité sans qualité connue.</span>
+    <label>Lots en stock, par lieu
+      <textarea id="fLots" rows="5" placeholder="[Lorville]&#10;258 x 20&#10;[Port Tressler]&#10;1000 x 6"></textarea>
+      <span style="font-size:12px">Le nom du lieu entre crochets, puis une ligne par qualité : <span class="num">258 x 20</span> = 20 unités de qualité 258. Un nombre seul = quantité sans qualité connue. Sans lieu = lieu non précisé.</span>
     </label>
     <label>Seuil d'alerte (quantité totale)<input type="number" id="fMin" step="any" min="0" placeholder="aucun"></label>
     <label>Couleur du caillou en jeu
@@ -275,6 +294,7 @@
       <span style="font-size:12px">Sert à reconnaître le minerai sur une capture quand son nom n'est pas affiché. Laisse vide si la couleur ne compte pas.</span>
     </label>
     <datalist id="catList"></datalist>
+    <datalist id="placeList"></datalist>
     <div class="dlg-actions">
       <button type="button" class="danger" id="fDelete" hidden>Supprimer</button>
       <span style="flex:1"></span>
@@ -298,7 +318,7 @@
 </dialog>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-<script src="config.js?v=5"></script>
-<script src="app.js?v=5"></script>
+<script src="config.js?v=6"></script>
+<script src="app.js?v=6"></script>
 </body>
 </html>
