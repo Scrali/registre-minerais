@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Registre des minerais</title>
+<meta name="description" content="Registre partagé des stocks de minerais de l'organisation, alimenté par capture d'écran.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ===== Connexion ===== -->
+<section class="gate" id="authView" hidden>
+  <div>
+    <div class="eyebrow">Logistique de l'organisation</div>
+    <h1>Registre des minerais</h1>
+  </div>
+  <div class="panel">
+    <div class="tabs" role="tablist">
+      <button type="button" role="tab" id="tabLogin" aria-selected="true">Connexion</button>
+      <button type="button" role="tab" id="tabSignup" aria-selected="false">Créer un compte</button>
+    </div>
+    <form class="panel-b" id="authForm">
+      <label id="pseudoField" hidden>Pseudo en jeu<input type="text" id="aPseudo" maxlength="40" autocomplete="nickname"></label>
+      <label>E-mail<input type="email" id="aEmail" required autocomplete="email"></label>
+      <label id="pwField">Mot de passe<input type="password" id="aPassword" required minlength="8" autocomplete="current-password"></label>
+      <button type="submit" class="primary" id="authSubmit">Se connecter</button>
+      <button type="button" class="linkbtn" id="forgot">Mot de passe oublié ?</button>
+      <div class="formmsg" id="authMsg" role="status"></div>
+    </form>
+  </div>
+</section>
+
+<!-- ===== Nouveau mot de passe (lien de réinitialisation) ===== -->
+<section class="gate" id="recoveryView" hidden>
+  <h1>Nouveau mot de passe</h1>
+  <form class="panel panel-b" id="recoveryForm">
+    <label>Nouveau mot de passe<input type="password" id="rPassword" required minlength="8" autocomplete="new-password"></label>
+    <button type="submit" class="primary">Enregistrer le mot de passe</button>
+    <div class="formmsg" id="recoveryMsg" role="status"></div>
+  </form>
+</section>
+
+<!-- ===== Compte en attente ===== -->
+<section class="gate" id="pendingView" hidden>
+  <h1>Compte en attente</h1>
+  <div class="panel panel-b">
+    <p style="margin:0">Ton compte <strong id="pendingName"></strong> est créé. Un administrateur de l'organisation doit le valider avant que tu puisses voir les stocks.</p>
+    <p class="muted" style="margin:0;font-size:14px">Cette page s'ouvrira toute seule dès que ton compte sera validé.</p>
+    <div class="row"><button type="button" class="logout">Se déconnecter</button></div>
+  </div>
+</section>
+
+<!-- ===== Configuration manquante ===== -->
+<section class="gate" id="configView" hidden>
+  <h1>Configuration manquante</h1>
+  <div class="panel panel-b">
+    <p style="margin:0">Renseigne l'adresse et la clé publique de ton projet Supabase dans le fichier <code>config.js</code>, puis recharge la page.</p>
+  </div>
+</section>
+
+<!-- ===== Application ===== -->
+<div class="wrap" id="appView" hidden>
+  <header class="top">
+    <div>
+      <div class="eyebrow">Logistique de l'organisation</div>
+      <h1>Registre des minerais</h1>
+    </div>
+    <div class="stats">
+      <div class="stat"><b id="stCount">–</b><span>Ressources</span></div>
+      <div class="stat"><b id="stTotal">–</b><span>Unités en stock</span></div>
+      <div class="stat" id="stLowBox"><b id="stLow">–</b><span>Sous le seuil</span></div>
+    </div>
+  </header>
+  <div class="account">
+    <span>Connecté en tant que <strong id="meName"></strong></span>
+    <span class="role" id="meRole"></span>
+    <span style="flex:1"></span>
+    <button type="button" id="openMembers" hidden>Membres<span class="pending-count" id="pendingCount" hidden></span></button>
+    <button type="button" class="logout">Se déconnecter</button>
+  </div>
+
+  <div id="status" hidden></div>
+
+  <section class="panel" id="capturePanel">
+    <div class="panel-h">
+      <div>
+        <h2>Lire une capture d'écran</h2>
+        <div class="muted" style="font-size:14px">Capture ton inventaire en jeu, colle-la ici, vérifie les quantités lues, puis enregistre.</div>
+        <div class="muted" style="font-size:13px">Les minerais sont aussi reconnus à la couleur de leur caillou : renseigne la couleur de chacun avec le bouton Modifier pour que la reconnaissance soit fiable.</div>
+      </div>
+    </div>
+    <div class="panel-b">
+      <div class="capture-grid">
+        <div class="drop" id="drop" tabindex="0" role="button" aria-label="Choisir ou coller une capture d'écran">
+          <div id="dropEmpty">
+            <div><strong>Colle ta capture</strong> avec <kbd>Ctrl</kbd>+<kbd>V</kbd></div>
+            <div class="hint">ou glisse une image ici, ou clique pour choisir un fichier</div>
+            <div class="hint" style="margin-top:8px">Astuce Windows : <kbd>Win</kbd>+<kbd>Maj</kbd>+<kbd>S</kbd> pour capturer une zone de l'écran</div>
+          </div>
+          <img id="preview" alt="Aperçu de la capture" hidden>
+          <input type="file" id="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+        </div>
+        <div class="cap-side">
+          <div>
+            <div style="font-size:13px;color:var(--muted);margin-bottom:6px">Que montre la capture ?</div>
+            <div class="seg" role="radiogroup">
+              <label><input type="radio" name="capMode" id="capModeSet" value="set" checked> Le stock complet (remplace)</label>
+              <label><input type="radio" name="capMode" id="capModeAdd" value="add"> Une récolte (ajoute)</label>
+              <label><input type="radio" name="capMode" id="capModeRemove" value="remove"> Une sortie (retire)</label>
+            </div>
+          </div>
+          <label>Note (facultatif)
+            <input type="text" id="capNote" placeholder="ex. Soute du cargo, entrepôt principal">
+          </label>
+          <div class="row">
+            <button class="primary" id="analyze" disabled>Analyser la capture</button>
+            <button id="clearCap" hidden>Effacer</button>
+          </div>
+          <div id="capMsg" class="muted"></div>
+        </div>
+      </div>
+
+      <div class="review" id="review" hidden>
+        <div class="scroll">
+          <table>
+            <thead><tr><th></th><th>Lu sur la capture</th><th>Couleur vue</th><th>Qualité</th><th>Quantité</th><th>Ressource du registre</th><th>Résultat</th></tr></thead>
+            <tbody id="reviewBody"></tbody>
+          </table>
+        </div>
+        <div class="row">
+          <button class="primary" id="commit">Enregistrer</button>
+          <span class="muted" id="commitMsg" style="font-size:14px"></span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="main">
+    <section class="panel">
+      <div class="panel-h">
+        <h2>Stocks</h2>
+        <div class="filters">
+          <input type="search" id="q" placeholder="Rechercher…" aria-label="Rechercher une ressource">
+          <select id="cat" aria-label="Filtrer par catégorie"><option value="">Toutes catégories</option></select>
+          <button class="primary" id="addRes">Ajouter une ressource</button>
+        </div>
+      </div>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Ressource</th><th>Quantité</th><th>Qualité</th><th>État</th><th>Mouvement rapide (Q · qté)</th><th></th></tr></thead>
+          <tbody id="stockBody"></tbody>
+        </table>
+      </div>
+      <div class="empty" id="stockEmpty">
+        <strong>Le registre est vide</strong>
+        <span>Colle une capture de ton inventaire ci-dessus, ou ajoute une première ressource à la main.</span>
+      </div>
+    </section>
+
+    <aside class="panel">
+      <div class="panel-h"><h2>Journal</h2><span class="muted" style="font-size:13px">40 derniers mouvements</span></div>
+      <ul class="log" id="log"></ul>
+      <div class="empty" id="logEmpty"><span>Chaque entrée, sortie et correction de stock apparaîtra ici avec son auteur.</span></div>
+    </aside>
+  </div>
+</div>
+
+<!-- ===== Fiche ressource ===== -->
+<dialog id="dlg">
+  <form id="resForm" method="dialog">
+    <h2 id="dlgTitle">Nouvelle ressource</h2>
+    <label>Nom<input type="text" id="fName" required maxlength="80" placeholder="ex. Quantanium"></label>
+    <div class="grid2">
+      <label>Catégorie<input type="text" id="fCat" list="catList" placeholder="ex. Minerai brut"></label>
+      <label>Unité<input type="text" id="fUnit" placeholder="ex. SCU"></label>
+    </div>
+    <label>Lots en stock
+      <textarea id="fLots" rows="4" placeholder="Une ligne par lot : qualité x quantité&#10;258 x 20&#10;1000 x 6"></textarea>
+      <span style="font-size:12px">Une ligne par qualité : <span class="num">258 x 20</span> = 20 unités de qualité 258. Un nombre seul = quantité sans qualité connue.</span>
+    </label>
+    <label>Seuil d'alerte (quantité totale)<input type="number" id="fMin" step="any" min="0" placeholder="aucun"></label>
+    <label>Couleur du caillou en jeu
+      <span class="colorrow">
+        <input type="color" id="fColor" value="#888888" aria-label="Couleur">
+        <input type="text" id="fColorName" placeholder="ex. violet translucide, reflets roses">
+      </span>
+      <span style="font-size:12px">Sert à reconnaître le minerai sur une capture quand son nom n'est pas affiché. Laisse vide si la couleur ne compte pas.</span>
+    </label>
+    <datalist id="catList"></datalist>
+    <div class="dlg-actions">
+      <button type="button" class="danger" id="fDelete" hidden>Supprimer</button>
+      <span style="flex:1"></span>
+      <button type="button" id="fCancel">Annuler</button>
+      <button type="submit" class="primary" id="fSave">Enregistrer</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- ===== Membres (admin) ===== -->
+<dialog id="members">
+  <div class="memb">
+    <h2>Membres</h2>
+    <span class="muted" style="font-size:14px">Valide les nouveaux comptes avant qu'ils voient les stocks. Les administrateurs gèrent les membres.</span>
+  </div>
+  <div class="memb-list" id="membList"></div>
+  <div class="dlg-actions" style="padding:16px 20px">
+    <span class="formmsg" id="membMsg"></span>
+    <button type="button" id="closeMembers">Fermer</button>
+  </div>
+</dialog>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
