@@ -385,6 +385,8 @@ $("#analyze").addEventListener("click", async () => {
       name: String(i.name).trim(), quality: qKey(i.quality) === "-" ? "" : qKey(i.quality), qty: i.qty == null ? 1 : num(i.qty),
       unit: String(i.unit || "").trim(), color: String(i.color || "").trim(), hex: okHex(String(i.hex || "").trim()), by: String(i.by || ""),
       on: true, target: matchTarget(String(i.name)),
+      // Lots lus comme le même caillou (même nom ou même couleur) : renommer l'un renomme les autres.
+      group: norm(i.name),
     }));
     st.items = items;
     if (!items.length) { capMsg("Aucune ressource lue sur cette capture. Essaie une capture plus nette ou recadrée sur l'inventaire.", true); $("#review").hidden = true; }
@@ -422,7 +424,10 @@ function renderReview() {
   const mode = capMode();
   const opts = st.resources.slice().sort((a, b) => a.name.localeCompare(b.name));
   const groups = groupItems();
+  const sizes = {};
+  for (const it of st.items) sizes[it.group] = (sizes[it.group] || 0) + 1;
   $("#reviewBody").innerHTML = st.items.map((it, i) => {
+    const linked = sizes[it.group] > 1 ? `<br>nom partagé par ${sizes[it.group]} lots de cette couleur` : "";
     const r = st.resources.find(x => x.id === it.target);
     if (!r && it.target !== "new") it.target = "new";
     const g = groups.get(r ? r.id : "new:" + norm(it.name));
@@ -432,7 +437,7 @@ function renderReview() {
     return `<tr data-i="${i}">
       <td><input type="checkbox" data-f="on" id="rv-on-${i}" ${it.on ? "checked" : ""} aria-label="Inclure cette ligne"></td>
       <td><input type="text" data-f="name" id="rv-name-${i}" value="${esc(it.name)}"></td>
-      <td><div style="display:flex;align-items:center;min-width:130px">${swatch(it.hex, it.color)}<span class="colordesc">${esc(it.color || "–")}${it.by === "couleur" ? "<br>reconnu par la couleur" : ""}</span></div></td>
+      <td><div style="display:flex;align-items:center;min-width:130px">${swatch(it.hex, it.color)}<span class="colordesc">${esc(it.color || "–")}${it.by === "couleur" ? "<br>reconnu par la couleur" : ""}${linked}</span></div></td>
       <td><input type="number" class="qin" step="1" min="0" max="1000" placeholder="?" data-f="quality" id="rv-q-${i}" value="${esc(it.quality)}" aria-label="Qualité"></td>
       <td><input type="number" step="any" min="0" data-f="qty" id="rv-qty-${i}" value="${it.qty}"></td>
       <td><select data-f="target" id="rv-target-${i}"><option value="new"${it.target === "new" ? " selected" : ""}>Nouvelle ressource</option>${opts.map(o => `<option value="${esc(o.id)}"${o.id === it.target ? " selected" : ""}>${esc(o.name)}</option>`).join("")}</select></td>
@@ -448,8 +453,20 @@ $("#reviewBody").addEventListener("change", e => {
   if (f === "on") it.on = e.target.checked;
   else if (f === "qty") it.qty = num(e.target.value);
   else if (f === "quality") it.quality = qKey(e.target.value) === "-" ? "" : qKey(e.target.value);
-  else if (f === "name") it.name = e.target.value.trim();
-  else if (f === "target") it.target = e.target.value;
+  else if (f === "name" || f === "target") {
+    const v = f === "name" ? e.target.value.trim() : e.target.value;
+    for (const x of st.items.filter(x => x.group === it.group)) {
+      if (f === "name") {
+        x.name = v;
+        const t = matchTarget(v);
+        if (t !== "new") x.target = t;
+      } else {
+        x.target = v;
+        const r = st.resources.find(r => r.id === v);
+        if (r) x.name = r.name;
+      }
+    }
+  }
   renderReview();
 });
 
