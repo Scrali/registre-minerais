@@ -6,6 +6,8 @@ const num = v => { const n = parseFloat(String(v).replace(/\s/g, "").replace(","
 const okHex = h => /^#[0-9a-f]{6}$/i.test(String(h || "")) ? h : "";
 const swatch = (h, title) => okHex(h) ? `<span class="sw" style="background:${okHex(h)}"${title ? ` title="${esc(title)}"` : ""}></span>` : '<span class="sw none" title="Pas de couleur"></span>';
 
+const okImg = s => typeof s === "string" && s.startsWith("data:image/jpeg;base64,");
+
 const cfg = window.REGISTRE_CONFIG || {};
 const configured = /^https:\/\/.+/.test(cfg.supabaseUrl || "") && cfg.supabaseKey && !/TON-PROJET|TA-CLE/.test(cfg.supabaseUrl + cfg.supabaseKey);
 const sb = configured ? window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseKey) : null;
@@ -214,7 +216,7 @@ function renderStock() {
     const pct = r.threshold > 0 ? Math.min(100, q / (r.threshold * 2) * 100) : 100;
     const pill = r.threshold > 0 ? (low ? '<span class="pill low">Bas</span>' : '<span class="pill ok">OK</span>') : '<span class="pill none">Sans seuil</span>';
     return `<tr class="${low ? "low" : ""}" data-id="${esc(r.id)}">
-      <td>${swatch(r.color)}<span class="res-name">${esc(r.name)}</span>${r.category ? `<span class="chip">${esc(r.category)}</span>` : ""}${r.color_name ? `<div class="colordesc">${esc(r.color_name)}</div>` : ""}</td>
+      <td>${okImg(r.image) ? `<img class="rimg" src="${esc(r.image)}" alt="" title="${esc(r.color_name || r.name)}">` : swatch(r.color)}<span class="res-name">${esc(r.name)}</span>${r.category ? `<span class="chip">${esc(r.category)}</span>` : ""}${r.color_name ? `<div class="colordesc">${esc(r.color_name)}</div>` : ""}</td>
       <td><div class="qty">${fmt(q)}<small>${esc(r.unit)}</small></div>${r.threshold > 0 ? `<div class="gauge" title="Seuil : ${fmt(r.threshold)}"><i style="width:${pct}%"></i></div>` : ""}</td>
       <td>${qual}${lotChips(l)}</td>
       <td>${pill}</td>
@@ -507,6 +509,7 @@ function groupItems() {
     if (!g.has(key)) g.set(key, { r, it, lots: {} });
     const e = g.get(key), k = qKey(it.quality);
     e.lots[k] = num(e.lots[k]) + num(it.qty);
+    if (!e.crop && it.crop) e.crop = it.crop;
   }
   return g;
 }
@@ -583,9 +586,12 @@ $("#commit").addEventListener("click", async () => {
   $("#commit").disabled = true;
   let done = 0;
   try {
-    for (const { r, it, lots } of todo) {
+    for (const { r, it, lots, crop } of todo) {
+      let id = r && r.id;
       if (r) await applyLots(r, mode, lots, "capture", note);
-      else await createResource({ name: it.name, unit: it.unit, lots: mode === "remove" ? {} : lots, color: it.hex, color_name: it.color }, "capture", note);
+      else id = await createResource({ name: it.name, unit: it.unit, lots: mode === "remove" ? {} : lots, color: it.hex, color_name: it.color }, "capture", note);
+      // Première image du caillou pour cette ressource (une image existante n'est pas remplacée).
+      if (id && crop && !(r && okImg(r.image))) await rpc("set_resource_image", { p_id: id, p_image: crop }).catch(err => console.warn(err));
       done++; $("#commitMsg").textContent = `${done} / ${todo.length}`;
     }
     $("#commitMsg").textContent = "";
@@ -613,7 +619,8 @@ const dirty = new Set();
 function dbRow(r) {
   const l = lotsOf(r);
   return `<tr data-id="${esc(r.id)}">
-    <td><input type="color" class="e-color" id="e-color-${esc(r.id)}" value="${okHex(r.color) || "#888888"}" data-had="${okHex(r.color) ? 1 : ""}" aria-label="Couleur de ${esc(r.name)}"></td>
+    <td><input type="color" class="e-color" id="e-color-${esc(r.id)}" value="${okHex(r.color) || "#888888"}" data-had="${okHex(r.color) ? 1 : ""}" aria-label="Couleur de ${esc(r.name)}">
+        ${r.image ? `<div class="dbimg"><img class="rimg" src="${esc(r.image)}" alt=""><button type="button" class="linkbtn" data-act="noimg" title="La prochaine capture enregistrée fournira une nouvelle image">Effacer l'image</button></div>` : ""}</td>
     <td><input type="text" class="e-name" id="e-name-${esc(r.id)}" value="${esc(r.name)}" maxlength="80" aria-label="Nom">
         <input type="text" class="e-colorname" id="e-cn-${esc(r.id)}" value="${esc(r.color_name)}" placeholder="Description de la couleur" aria-label="Description de la couleur"></td>
     <td><input type="text" class="e-cat" id="e-cat-${esc(r.id)}" value="${esc(r.category)}" list="catList" aria-label="Catégorie"></td>
@@ -661,6 +668,12 @@ $("#dbBody").addEventListener("click", async e => {
   const b = e.target.closest("button[data-act]"); if (!b) return;
   const tr = b.closest("tr"), id = tr.dataset.id, r = st.resources.find(x => x.id === id);
   if (!r) return;
+  if (b.dataset.act === "noimg") {
+    b.disabled = true;
+    try { await rpc("set_resource_image", { p_id: id, p_image: "", p_replace: true }); r.image = ""; renderDb(); renderStock(); setStatus(""); }
+    catch (err) { setStatus(errText(err)); b.disabled = false; }
+    return;
+  }
   if (b.dataset.act === "del") {
     if (!b.classList.contains("armed")) { b.classList.add("armed"); b.textContent = "Confirmer"; return; }
     b.disabled = true;

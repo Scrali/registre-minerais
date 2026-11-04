@@ -12,7 +12,7 @@ Site de gestion des stocks de minerais d'une organisation : comptes membres vali
 
 1. Crée un compte sur [supabase.com](https://supabase.com), puis un projet (offre **Free**, région Europe).
 2. Ouvre **SQL Editor** > **New query**, colle tout le contenu de [`supabase/schema.sql`](supabase/schema.sql), puis clique sur **Run**.
-   Fais ensuite de même avec [`supabase/migrations/002_base_de_donnees.sql`](supabase/migrations/002_base_de_donnees.sql) (fusion et annulation, pour l'onglet Base de données).
+   Fais ensuite de même avec [`supabase/migrations/002_base_de_donnees.sql`](supabase/migrations/002_base_de_donnees.sql) (fusion et annulation, pour l'onglet Base de données), puis [`supabase/migrations/003_image_ressource.sql`](supabase/migrations/003_image_ressource.sql) (image du caillou de chaque ressource).
 3. Dans **Authentication** > **Sign In / Providers** > **Email**, désactive **Confirm email**.
    L'offre gratuite n'envoie que quelques e-mails par heure, et la validation des comptes par un administrateur remplace déjà cette confirmation.
 4. Dans **Authentication** > **URL Configuration**, mets l'adresse du site GitHub Pages dans **Site URL** et dans **Redirect URLs** (nécessaire pour « Mot de passe oublié »).
