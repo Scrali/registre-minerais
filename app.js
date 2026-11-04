@@ -419,13 +419,35 @@ async function analyzeShot(s) {
     try { msg = (await error.context.json()).error || msg; } catch (_) {}
     throw new Error(msg);
   }
-  return (Array.isArray(data?.items) ? data.items : []).filter(i => i && i.name).map(i => ({
+  const raw = (Array.isArray(data?.items) ? data.items : []).filter(i => i && i.name);
+  const crops = await cropTiles(s.file, raw.map(i => i.box));
+  return raw.map((i, k) => ({
     name: String(i.name).trim(), quality: qKey(i.quality) === "-" ? "" : qKey(i.quality), qty: i.qty == null ? 1 : num(i.qty),
     unit: String(i.unit || "").trim(), color: String(i.color || "").trim(), hex: okHex(String(i.hex || "").trim()), by: String(i.by || ""),
-    on: true, target: matchTarget(String(i.name)), shot: s.id,
+    on: true, target: matchTarget(String(i.name)), shot: s.id, crop: crops[k],
     // Lots lus comme le même caillou (même nom ou même couleur) : renommer l'un renomme les autres, sur toutes les pages.
     group: norm(i.name),
   }));
+}
+
+// Découpe la case de chaque lot dans la capture d'origine, pour vérifier le caillou à l'œil.
+async function cropTiles(file, boxes) {
+  if (!boxes.some(b => Array.isArray(b) && b.length === 4)) return [];
+  let bmp; try { bmp = await createImageBitmap(file); } catch (_) { return []; }
+  const W = bmp.width, H = bmp.height;
+  return boxes.map(b => {
+    if (!Array.isArray(b) || b.length !== 4) return "";
+    let [l, t, r, d] = b.map(v => Math.min(1000, Math.max(0, num(v))));
+    if (r - l < 5 || d - t < 5) return "";
+    const pad = 8; // marge en millièmes, la position lue est approximative
+    l = Math.max(0, l - pad); t = Math.max(0, t - pad); r = Math.min(1000, r + pad); d = Math.min(1000, d + pad);
+    const sx = l / 1000 * W, sy = t / 1000 * H, sw = (r - l) / 1000 * W, sh = (d - t) / 1000 * H;
+    const k = Math.min(1, 160 / Math.max(sw, sh));
+    const c = document.createElement("canvas");
+    c.width = Math.max(1, Math.round(sw * k)); c.height = Math.max(1, Math.round(sh * k));
+    c.getContext("2d").drawImage(bmp, sx, sy, sw, sh, 0, 0, c.width, c.height);
+    return c.toDataURL("image/jpeg", 0.85);
+  });
 }
 
 $("#analyze").addEventListener("click", async () => {
@@ -496,7 +518,8 @@ function renderReview() {
   const sizes = {};
   for (const it of st.items) sizes[it.group] = (sizes[it.group] || 0) + 1;
   $("#reviewBody").innerHTML = st.items.map((it, i) => {
-    const linked = sizes[it.group] > 1 ? `<br>nom partagé par ${sizes[it.group]} lots de cette couleur` : "";
+    const linked = sizes[it.group] > 1 ? `<br>${sizes[it.group]} lots de ce type · <button type="button" class="linkbtn" data-split="${i}" title="Ce caillou n'est pas le même minerai : le nommer à part">Séparer</button>` : "";
+    const pic = it.crop ? `<img class="crop" src="${it.crop}" alt="Case lue sur la capture">` : swatch(it.hex, it.color);
     const r = st.resources.find(x => x.id === it.target);
     if (!r && it.target !== "new") it.target = "new";
     const g = groups.get(r ? r.id : "new:" + norm(it.name));
@@ -507,7 +530,7 @@ function renderReview() {
       <td><input type="checkbox" data-f="on" id="rv-on-${i}" ${it.on ? "checked" : ""} aria-label="Inclure cette ligne"></td>
       <td class="pg">p. ${shotPage(it.shot) || "–"}</td>
       <td><input type="text" data-f="name" id="rv-name-${i}" value="${esc(it.name)}"></td>
-      <td><div style="display:flex;align-items:center;min-width:130px">${swatch(it.hex, it.color)}<span class="colordesc">${esc(it.color || "–")}${it.by === "couleur" ? "<br>reconnu par la couleur" : ""}${linked}</span></div></td>
+      <td><div style="display:flex;align-items:center;min-width:130px">${pic}<span class="colordesc">${esc(it.color || "–")}${it.by === "couleur" ? "<br>reconnu par la couleur" : ""}${linked}</span></div></td>
       <td><input type="number" class="qin" step="1" min="0" max="1000" placeholder="?" data-f="quality" id="rv-q-${i}" value="${esc(it.quality)}" aria-label="Qualité"></td>
       <td><input type="number" step="any" min="0" data-f="qty" id="rv-qty-${i}" value="${it.qty}"></td>
       <td><select data-f="target" id="rv-target-${i}"><option value="new"${it.target === "new" ? " selected" : ""}>Nouvelle ressource</option>${opts.map(o => `<option value="${esc(o.id)}"${o.id === it.target ? " selected" : ""}>${esc(o.name)}</option>`).join("")}</select></td>
@@ -517,6 +540,20 @@ function renderReview() {
   $("#commit").textContent = n ? `Enregistrer ${n} lot${n > 1 ? "s" : ""} (${groups.size} ressource${groups.size > 1 ? "s" : ""})` : "Aucune ligne cochée";
   $("#commit").disabled = !n;
 }
+// « Séparer » : ce lot quitte son groupe de couleur et prend un nom à lui.
+let splitSeq = 0;
+$("#reviewBody").addEventListener("click", e => {
+  const b = e.target.closest("[data-split]"); if (!b) return;
+  const it = st.items[+b.dataset.split];
+  // Emmène aussi les lots du groupe dont la couleur décrite est la même (même type de caillou).
+  const same = st.items.filter(x => x.group === it.group);
+  let moved = same.filter(x => norm(x.color) === norm(it.color));
+  if (moved.length === same.length) moved = [it];
+  const g = "split:" + (++splitSeq), name = `${it.name} (autre)`;
+  for (const x of moved) { x.group = g; x.name = name; x.target = "new"; }
+  renderReview();
+  const inp = $(`#rv-name-${b.dataset.split}`); if (inp) { inp.focus(); inp.select(); }
+});
 $("#reviewBody").addEventListener("change", e => {
   const f = e.target.dataset.f; if (!f) return;
   const it = st.items[+e.target.closest("tr").dataset.i];

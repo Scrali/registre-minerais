@@ -195,3 +195,6 @@ tr.undone td{color:var(--muted);text-decoration:line-through}
 tr.undone td:last-child{text-decoration:none}
 .tag{font:600 11px var(--f-mono);letter-spacing:.06em;text-transform:uppercase;white-space:nowrap}
 .up{color:var(--ok)} .down{color:var(--crit)}
+.crop{width:72px;height:72px;object-fit:cover;border-radius:6px;border:1px solid var(--line);margin-right:8px;flex:none;background:#000;cursor:zoom-in;transition:transform .12s}
+.crop:hover{transform:scale(2.2);position:relative;z-index:5;box-shadow:0 6px 20px rgba(0,0,0,.5)}
+.colordesc .linkbtn{min-height:0;font-size:12px}

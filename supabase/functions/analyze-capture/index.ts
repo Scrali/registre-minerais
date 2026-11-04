@@ -24,7 +24,7 @@ const SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["name", "quality", "qty", "unit", "color", "hex", "by"],
+        required: ["name", "quality", "qty", "unit", "color", "hex", "by", "box"],
         properties: {
           name: { type: "string" },
           quality: { type: ["integer", "null"] },
@@ -33,6 +33,8 @@ const SCHEMA = {
           color: { type: "string" },
           hex: { type: "string" },
           by: { type: "string", enum: ["nom", "couleur", "inconnu"] },
+          // Position de la case dans l'image, en millièmes : [gauche, haut, droite, bas].
+          box: { type: "array", items: { type: "integer" } },
         },
       },
     },
@@ -46,16 +48,17 @@ FORMAT DES CASES : chaque case de minerai est un LOT.
 - Le nombre suivi de « Q » (ex. « 258Q ») est la QUALITÉ du lot, de 0 à 1000. Ce n'est PAS une quantité.
 - Le nombre suivi de « x » (ex. « 20x ») est la QUANTITÉ d'unités dans le lot. S'il n'y a pas de « x », la quantité est 1.
 - Exemple : une case « 258Q 20x » = 20 unités de qualité 258 ; une case « 274Q » seule = 1 unité de qualité 274.
-Relève chaque case une par une. Ne fusionne JAMAIS deux lots de qualités différentes. Additionne seulement les cases du même minerai ET de même qualité.
+Relève chaque case une par une : un élément de la liste par case, même si deux cases ont le même minerai et la même qualité. Ne fusionne jamais deux cases.
 Si une infobulle affiche le nom d'un minerai pour une case, utilise ce nom pour cette case et pour toutes les cases de même couleur et de même forme.
-Dans ce jeu, la COULEUR du caillou indique quel minerai c'est. Pour chaque lot, observe attentivement sa couleur dominante (teinte, clarté, transparence, reflets).
+Dans ce jeu, la COULEUR et la FORME du caillou indiquent quel minerai c'est. Pour chaque lot, observe attentivement sa couleur dominante (teinte, clarté, transparence, reflets) et sa forme (cristaux, roche).
+Attention aux teintes proches : par exemple une roche brun-gris foncé et une roche brun-rouge sont deux minerais DIFFÉRENTS. Compare les cases entre elles et donne un nom différent à chaque type de caillou distinct ; ne regroupe sous un même nom que les cases dont le caillou est vraiment identique.
 Ressources connues du registre, avec leur couleur quand elle est renseignée :
 ${known}
 Pour identifier chaque lot :
 1. Si un nom est écrit et correspond à une ressource connue (même avec une orthographe, une casse ou une langue un peu différente), reprends exactement le nom connu. by = "nom".
 2. Si aucun nom n'est lisible, compare la couleur observée aux couleurs connues et reprends le nom de la ressource dont la couleur correspond le mieux. by = "couleur".
 3. Si ni le nom ni la couleur ne correspondent, mets le nom écrit s'il y en a un, sinon "Caillou <couleur>" (ex. "Caillou vert pâle"). by = "inconnu".
-Champs : quality = entier 0-1000 ou null si aucune qualité affichée ; qty = nombre ; unit = chaîne vide si aucune unité visible ; color = description en français de la couleur observée ; hex = son approximation en #rrggbb.
+Champs : quality = entier 0-1000 ou null si aucune qualité affichée ; qty = nombre ; unit = chaîne vide si aucune unité visible ; color = description en français de la couleur observée ; hex = son approximation en #rrggbb ; box = rectangle de la case entière (image du caillou et texte de qualité/quantité compris), en millièmes de la largeur et de la hauteur de l'image : [gauche, haut, droite, bas], chaque valeur de 0 à 1000.
 Si tu ne vois aucune ressource, renvoie une liste vide.`;
 }
 
