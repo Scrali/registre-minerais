@@ -83,8 +83,14 @@
     <button type="button" class="logout">Se déconnecter</button>
   </div>
 
+  <nav class="apptabs" id="appTabs" role="tablist" hidden>
+    <button type="button" role="tab" data-tab="stocks" aria-selected="true">Stocks</button>
+    <button type="button" role="tab" data-tab="db" aria-selected="false">Base de données</button>
+  </nav>
+
   <div id="status" hidden></div>
 
+  <div class="view" id="stocksView">
   <section class="panel" id="capturePanel">
     <div class="panel-h">
       <div>
@@ -166,6 +172,83 @@
       <ul class="log" id="log"></ul>
       <div class="empty" id="logEmpty"><span>Chaque entrée, sortie et correction de stock apparaîtra ici avec son auteur.</span></div>
     </aside>
+  </div>
+  </div>
+
+  <!-- ===== Base de données (administrateurs) ===== -->
+  <div class="view" id="dbView" hidden>
+    <section class="panel">
+      <div class="panel-h">
+        <div>
+          <h2>Export et sauvegarde</h2>
+          <div class="muted" style="font-size:14px">Les fichiers CSV s'ouvrent dans Excel. La sauvegarde JSON contient toute la base.</div>
+        </div>
+        <div class="row">
+          <button type="button" id="expStock">Stocks (CSV)</button>
+          <button type="button" id="expLog">Journal complet (CSV)</button>
+          <button type="button" id="expJson">Sauvegarde complète (JSON)</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-h">
+        <div>
+          <h2>Ressources</h2>
+          <div class="muted" style="font-size:14px">Modifie directement une ligne, puis clique sur Enregistrer. Lots : une ligne par qualité, ex. <span class="num">258 x 20</span>.</div>
+        </div>
+        <input type="search" id="dbQ" placeholder="Rechercher…" aria-label="Rechercher une ressource">
+      </div>
+      <div class="scroll">
+        <table class="dbtable">
+          <thead><tr><th>Couleur</th><th>Nom et description</th><th>Catégorie</th><th>Unité</th><th>Seuil</th><th>Lots (qualité x quantité)</th><th>Total</th><th></th></tr></thead>
+          <tbody id="dbBody"></tbody>
+        </table>
+      </div>
+      <div class="empty" id="dbEmpty" hidden><span>Aucune ressource dans la base.</span></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-h">
+        <div>
+          <h2>Fusionner deux ressources</h2>
+          <div class="muted" style="font-size:14px">Les lots de la première sont ajoutés à la seconde, qualité par qualité. La première est ensuite supprimée et son historique rattaché à la seconde.</div>
+        </div>
+      </div>
+      <div class="panel-b merge">
+        <label>Ressource à fusionner<select id="mSource"></select></label>
+        <span class="arrow" aria-hidden="true">→</span>
+        <label>Dans la ressource<select id="mTarget"></select></label>
+        <button type="button" class="danger" id="mGo" disabled>Fusionner</button>
+        <div class="formmsg" id="mMsg" style="flex-basis:100%"></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-h">
+        <div>
+          <h2>Historique complet</h2>
+          <div class="muted" style="font-size:14px">Annuler un mouvement retire ce qu'il avait ajouté (ou remet ce qu'il avait retiré), sans toucher aux mouvements suivants.</div>
+        </div>
+      </div>
+      <div class="panel-b hfilters">
+        <label>Ressource<select id="hRes"><option value="">Toutes</option></select></label>
+        <label>Membre<select id="hWho"><option value="">Tous</option></select></label>
+        <label>Du<input type="date" id="hFrom"></label>
+        <label>Au<input type="date" id="hTo"></label>
+        <button type="button" class="primary" id="hGo">Afficher</button>
+      </div>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Date</th><th>Membre</th><th>Ressource</th><th>Type</th><th>Total</th><th>Lots concernés</th><th>Note</th><th></th></tr></thead>
+          <tbody id="hBody"></tbody>
+        </table>
+      </div>
+      <div class="row" style="padding:12px 16px">
+        <button type="button" id="hMore" hidden>Afficher plus</button>
+        <span class="muted" id="hCount" style="font-size:14px"></span>
+      </div>
+    </section>
   </div>
 </div>
 

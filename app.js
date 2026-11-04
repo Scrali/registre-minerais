@@ -127,6 +127,8 @@ async function enter(session) {
   $("#meRole").textContent = me.role === "admin" ? "Administrateur" : "Membre";
   $("#meRole").className = "role" + (me.role === "admin" ? " admin" : "");
   $("#openMembers").hidden = me.role !== "admin";
+  $("#appTabs").hidden = me.role !== "admin";
+  if (me.role !== "admin") showTab("stocks");
   show("appView");
   await Promise.all([loadProfiles(), loadResources(), loadMoves()]);
 }
@@ -146,6 +148,7 @@ async function loadResources() {
   setStatus("");
   st.resources = data || [];
   renderStock();
+  if (!$("#dbView").hidden) renderDb();
 }
 async function loadMoves() {
   const { data } = await sb.from("movements").select("*").order("at", { ascending: false }).limit(40);
@@ -290,7 +293,7 @@ function ago(iso) {
   if (s < 86400) return "il y a " + Math.floor(s / 3600) + " h";
   return new Date(iso).toLocaleDateString("fr-FR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 }
-const modeLabel = { add: "Entrée", remove: "Sortie", set: "Inventaire", create: "Création", delete: "Suppression" };
+const modeLabel = { add: "Entrée", remove: "Sortie", set: "Inventaire", create: "Création", delete: "Suppression", merge: "Fusion", undo: "Annulation" };
 function renderLog() {
   $("#logEmpty").hidden = st.moves.length > 0;
   $("#log").innerHTML = st.moves.map(m => {
@@ -489,6 +492,216 @@ $("#commit").addEventListener("click", async () => {
     $("#commitMsg").textContent = `${done} / ${todo.length} enregistrées avant l'erreur.`;
     $("#commit").disabled = false;
   }
+});
+
+// ---------- onglet Base de données (administrateurs) ----------
+function showTab(tab) {
+  document.querySelectorAll("#appTabs button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
+  $("#stocksView").hidden = tab !== "stocks";
+  $("#dbView").hidden = tab !== "db";
+  if (tab === "db") { renderDb(); if (!hist.loaded) loadHistory(true); }
+}
+$("#appTabs").addEventListener("click", e => { const b = e.target.closest("button[data-tab]"); if (b) showTab(b.dataset.tab); });
+
+// Édition directe des ressources. Une ligne modifiée et pas encore enregistrée n'est pas
+// écrasée par les mises à jour en temps réel des autres membres.
+const dirty = new Set();
+function dbRow(r) {
+  const l = lotsOf(r);
+  return `<tr data-id="${esc(r.id)}">
+    <td><input type="color" class="e-color" id="e-color-${esc(r.id)}" value="${okHex(r.color) || "#888888"}" data-had="${okHex(r.color) ? 1 : ""}" aria-label="Couleur de ${esc(r.name)}"></td>
+    <td><input type="text" class="e-name" id="e-name-${esc(r.id)}" value="${esc(r.name)}" maxlength="80" aria-label="Nom">
+        <input type="text" class="e-colorname" id="e-cn-${esc(r.id)}" value="${esc(r.color_name)}" placeholder="Description de la couleur" aria-label="Description de la couleur"></td>
+    <td><input type="text" class="e-cat" id="e-cat-${esc(r.id)}" value="${esc(r.category)}" list="catList" aria-label="Catégorie"></td>
+    <td><input type="text" class="e-unit" id="e-unit-${esc(r.id)}" value="${esc(r.unit)}" aria-label="Unité" style="max-width:80px"></td>
+    <td><input type="number" class="e-min" id="e-min-${esc(r.id)}" value="${r.threshold > 0 ? r.threshold : ""}" min="0" step="any" placeholder="aucun" aria-label="Seuil"></td>
+    <td><textarea class="e-lots" id="e-lots-${esc(r.id)}" rows="${Math.min(6, Math.max(2, Object.keys(l).length))}" aria-label="Lots">${esc(lotsToLines(l))}</textarea></td>
+    <td class="num">${fmt(r.qty)}</td>
+    <td><div class="acts"><button type="button" class="primary" data-act="save" disabled>Enregistrer</button><button type="button" class="danger" data-act="del">Supprimer</button></div></td>
+  </tr>`;
+}
+function renderDb() {
+  const q = norm($("#dbQ").value);
+  const rows = st.resources.filter(r => !q || norm(r.name).includes(q) || norm(r.category).includes(q)).sort((a, b) => a.name.localeCompare(b.name));
+  const body = $("#dbBody");
+  const keep = new Map([...body.querySelectorAll("tr[data-id]")].filter(tr => dirty.has(tr.dataset.id)).map(tr => [tr.dataset.id, tr]));
+  const tmp = document.createElement("tbody");
+  tmp.innerHTML = rows.map(dbRow).join("");
+  for (const tr of [...tmp.children]) if (keep.has(tr.dataset.id)) tmp.replaceChild(keep.get(tr.dataset.id), tr);
+  body.replaceChildren(...tmp.children);
+  $("#dbEmpty").hidden = st.resources.length > 0;
+
+  const opts = st.resources.slice().sort((a, b) => a.name.localeCompare(b.name))
+    .map(r => `<option value="${esc(r.id)}">${esc(r.name)} (${fmt(r.qty)})</option>`).join("");
+  for (const id of ["#mSource", "#mTarget"]) {
+    const sel = $(id), cur = sel.value;
+    sel.innerHTML = '<option value="">Choisir…</option>' + opts;
+    if (st.resources.some(r => r.id === cur)) sel.value = cur;
+  }
+  const hr = $("#hRes"), hrCur = hr.value;
+  hr.innerHTML = '<option value="">Toutes</option>' + st.resources.slice().sort((a, b) => a.name.localeCompare(b.name)).map(r => `<option value="${esc(r.id)}">${esc(r.name)}</option>`).join("");
+  hr.value = hrCur;
+  const hw = $("#hWho"), hwCur = hw.value;
+  hw.innerHTML = '<option value="">Tous</option>' + Object.values(st.profiles).sort((a, b) => a.pseudo.localeCompare(b.pseudo)).map(p => `<option value="${esc(p.id)}">${esc(p.pseudo)}</option>`).join("");
+  hw.value = hwCur;
+  updateMerge();
+}
+$("#dbQ").addEventListener("input", renderDb);
+$("#dbBody").addEventListener("input", e => {
+  const tr = e.target.closest("tr[data-id]"); if (!tr) return;
+  if (e.target.classList.contains("e-color")) e.target.dataset.touched = "1";
+  dirty.add(tr.dataset.id); tr.classList.add("dirty");
+  tr.querySelector('[data-act="save"]').disabled = false;
+});
+$("#dbBody").addEventListener("click", async e => {
+  const b = e.target.closest("button[data-act]"); if (!b) return;
+  const tr = b.closest("tr"), id = tr.dataset.id, r = st.resources.find(x => x.id === id);
+  if (!r) return;
+  if (b.dataset.act === "del") {
+    if (!b.classList.contains("armed")) { b.classList.add("armed"); b.textContent = "Confirmer"; return; }
+    b.disabled = true;
+    try { dirty.delete(id); await rpc("delete_resource", { p_id: id }); setStatus(""); }
+    catch (err) { setStatus(errText(err)); b.disabled = false; }
+    return;
+  }
+  const v = sel => tr.querySelector(sel);
+  const name = v(".e-name").value.trim();
+  if (!name) { v(".e-name").focus(); return; }
+  const color = v(".e-color");
+  b.disabled = true;
+  try {
+    await applyLots(r, "set", parseLots(v(".e-lots").value), "correction", "", {
+      name, category: v(".e-cat").value.trim(), unit: v(".e-unit").value.trim(), threshold: num(v(".e-min").value),
+      color: color.dataset.touched || color.dataset.had ? color.value : "", color_name: v(".e-colorname").value.trim(),
+    });
+    dirty.delete(id); tr.classList.remove("dirty"); setStatus("");
+    await loadResources();
+  } catch (err) { setStatus(errText(err)); b.disabled = false; }
+});
+
+// Fusion
+function updateMerge() {
+  const s = st.resources.find(r => r.id === $("#mSource").value), t = st.resources.find(r => r.id === $("#mTarget").value);
+  const go = $("#mGo"); go.classList.remove("armed"); go.textContent = "Fusionner";
+  go.disabled = !s || !t || s.id === t.id;
+  const m = $("#mMsg"); m.className = "formmsg";
+  if (s && t && s.id === t.id) m.textContent = "Choisis deux ressources différentes.";
+  else if (s && t) {
+    const after = mergeLots(lotsOf(t), lotsOf(s), "add");
+    m.textContent = `« ${t.name} » passera de ${fmt(t.qty)} à ${fmt(sumLots(after))} unités (${lotsText(after) || "aucun lot"}). « ${s.name} » sera supprimée.`;
+  } else m.textContent = "";
+}
+$("#mSource").addEventListener("change", updateMerge);
+$("#mTarget").addEventListener("change", updateMerge);
+$("#mGo").addEventListener("click", async () => {
+  const go = $("#mGo");
+  if (!go.classList.contains("armed")) { go.classList.add("armed"); go.textContent = "Confirmer la fusion"; return; }
+  go.disabled = true;
+  const s = $("#mSource").value, t = $("#mTarget").value;
+  try {
+    await rpc("merge_resources", { p_source: s, p_target: t });
+    $("#mSource").value = ""; await loadResources();
+    const m = $("#mMsg"); m.textContent = "Fusion effectuée."; m.className = "formmsg ok";
+    loadHistory(true);
+  } catch (err) { const m = $("#mMsg"); m.textContent = errText(err); m.className = "formmsg err"; updateMerge(); }
+});
+
+// Historique complet, par pages de 100
+const hist = { rows: [], page: 0, done: false, loaded: false };
+const HPAGE = 100;
+function histQuery() {
+  let q = sb.from("movements").select("*").order("at", { ascending: false });
+  if ($("#hRes").value) q = q.eq("resource_id", $("#hRes").value);
+  if ($("#hWho").value) q = q.eq("by", $("#hWho").value);
+  if ($("#hFrom").value) q = q.gte("at", new Date($("#hFrom").value + "T00:00:00").toISOString());
+  if ($("#hTo").value) q = q.lte("at", new Date($("#hTo").value + "T23:59:59").toISOString());
+  return q;
+}
+async function loadHistory(reset) {
+  if (reset) { hist.rows = []; hist.page = 0; hist.done = false; }
+  hist.loaded = true;
+  const { data, error } = await histQuery().range(hist.page * HPAGE, hist.page * HPAGE + HPAGE - 1);
+  if (error) return setStatus(errText(error));
+  hist.rows.push(...(data || [])); hist.page++; hist.done = (data || []).length < HPAGE;
+  renderHistory();
+}
+const canUndo = m => !m.undone_at && m.lots_before && m.lots_after && !["delete", "merge", "undo"].includes(m.mode) && st.resources.some(r => r.id === m.resource_id);
+function renderHistory() {
+  $("#hBody").innerHTML = hist.rows.map(m => {
+    const d = num(m.after) - num(m.before);
+    const who = (st.profiles[m.by] && st.profiles[m.by].pseudo) || "Un membre";
+    const when = new Date(m.at).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" });
+    const act = m.undone_at ? '<span class="tag">Annulé</span>' : canUndo(m) ? `<button type="button" data-undo="${m.id}">Annuler</button>` : "";
+    return `<tr class="${m.undone_at ? "undone" : ""}">
+      <td class="num" style="white-space:nowrap">${when}</td><td>${esc(who)}</td><td><strong>${esc(m.name)}</strong></td>
+      <td><span class="tag">${modeLabel[m.mode] || esc(m.mode)}</span>${m.source === "capture" ? '<br><span class="muted" style="font-size:12px">par capture</span>' : ""}</td>
+      <td class="num" style="white-space:nowrap">${fmt(m.before)} → ${fmt(m.after)} <span class="${d > 0 ? "up" : d < 0 ? "down" : ""}">(${d > 0 ? "+" : ""}${fmt(d)})</span></td>
+      <td class="num" style="font-size:12px">${esc(m.detail)}</td><td style="font-size:13px">${esc(m.note)}</td><td>${act}</td></tr>`;
+  }).join("") || '<tr><td colspan="8" class="muted">Aucun mouvement pour ces filtres.</td></tr>';
+  $("#hMore").hidden = hist.done;
+  $("#hCount").textContent = `${hist.rows.length} mouvement${hist.rows.length > 1 ? "s" : ""} affiché${hist.rows.length > 1 ? "s" : ""}`;
+}
+$("#hGo").addEventListener("click", () => loadHistory(true));
+$("#hMore").addEventListener("click", () => loadHistory(false));
+$("#hBody").addEventListener("click", async e => {
+  const b = e.target.closest("button[data-undo]"); if (!b) return;
+  if (!b.classList.contains("armed")) { b.classList.add("armed", "danger"); b.textContent = "Confirmer"; return; }
+  b.disabled = true;
+  try { await rpc("undo_movement", { p_id: Number(b.dataset.undo) }); setStatus(""); await loadResources(); loadHistory(true); }
+  catch (err) { setStatus(errText(err)); b.disabled = false; }
+});
+
+// Export : CSV au format Excel français (point-virgule, BOM UTF-8) et sauvegarde JSON
+function download(filename, text, type) {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const a = document.createElement("a"); a.href = url; a.download = filename;
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+const csvCell = v => { const s = String(v ?? ""); return /[;"\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+const csv = rows => "﻿" + rows.map(r => r.map(csvCell).join(";")).join("\r\n");
+const today = () => new Date().toISOString().slice(0, 10);
+const frNum = n => String(Math.round(num(n) * 1000) / 1000).replace(".", ",");
+async function allMovements() {
+  const out = [];
+  for (let p = 0; ; p++) {
+    const { data, error } = await sb.from("movements").select("*").order("at").range(p * 1000, p * 1000 + 999);
+    if (error) throw error;
+    out.push(...data);
+    if (data.length < 1000) return out;
+  }
+}
+$("#expStock").addEventListener("click", () => {
+  const rows = [["Ressource", "Catégorie", "Unité", "Quantité", "Qualité moyenne", "Lots", "Seuil", "Couleur", "Description couleur"]];
+  for (const r of st.resources.slice().sort((a, b) => a.name.localeCompare(b.name))) {
+    const l = lotsOf(r);
+    rows.push([r.name, r.category, r.unit, frNum(r.qty), avgQ(l) ?? "", lotsText(l), r.threshold ? frNum(r.threshold) : "", r.color, r.color_name]);
+  }
+  download(`stocks-${today()}.csv`, csv(rows), "text/csv;charset=utf-8");
+});
+$("#expLog").addEventListener("click", async e => {
+  const b = e.currentTarget; b.disabled = true;
+  try {
+    const ms = await allMovements();
+    const rows = [["Date", "Membre", "Ressource", "Type", "Source", "Avant", "Après", "Écart", "Lots concernés", "Note", "Annulé"]];
+    for (const m of ms) rows.push([new Date(m.at).toLocaleString("fr-FR"), (st.profiles[m.by] || {}).pseudo || "", m.name, modeLabel[m.mode] || m.mode, m.source,
+      frNum(m.before), frNum(m.after), frNum(num(m.after) - num(m.before)), m.detail, m.note, m.undone_at ? "oui" : ""]);
+    download(`journal-${today()}.csv`, csv(rows), "text/csv;charset=utf-8");
+  } catch (err) { setStatus(errText(err)); }
+  b.disabled = false;
+});
+$("#expJson").addEventListener("click", async e => {
+  const b = e.currentTarget; b.disabled = true;
+  try {
+    const backup = {
+      exported_at: new Date().toISOString(),
+      resources: st.resources,
+      movements: await allMovements(),
+      profiles: Object.values(st.profiles).map(p => ({ id: p.id, pseudo: p.pseudo, role: p.role, created_at: p.created_at })),
+    };
+    download(`sauvegarde-registre-${today()}.json`, JSON.stringify(backup, null, 2), "application/json");
+  } catch (err) { setStatus(errText(err)); }
+  b.disabled = false;
 });
 
 // ---------- démarrage ----------
