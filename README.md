@@ -21,6 +21,8 @@ Site de gestion des stocks de minerais d'une organisation : comptes membres vali
 1. Crée une clé API sur [console.anthropic.com](https://console.anthropic.com) (**API Keys**). Fixe une limite de dépense mensuelle dans **Billing** > **Limits**.
 2. Dans Supabase, **Edge Functions** > **Deploy a new function** > **Via Editor**, nomme-la exactement `analyze-capture`, colle le contenu de [`supabase/functions/analyze-capture/index.ts`](supabase/functions/analyze-capture/index.ts), puis déploie.
 3. Dans **Edge Functions** > **Secrets**, ajoute `ANTHROPIC_API_KEY` avec ta clé.
+4. Dans **Edge Functions** > `analyze-capture` > **Settings**, décoche **Verify JWT with legacy secret** puis **Save changes**.
+   Les projets récents signent les connexions avec une nouvelle clé (ECC) que cette option refuse. La fonction vérifie elle-même que la personne est un membre validé.
 
 Coût indicatif : quelques centimes par capture analysée (modèle Claude Opus 5.5). La saisie manuelle ne coûte rien.
 
