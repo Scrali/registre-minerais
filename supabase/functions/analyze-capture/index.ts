@@ -33,7 +33,7 @@ const SCHEMA = {
           color: { type: "string" },
           hex: { type: "string" },
           by: { type: "string", enum: ["nom", "couleur", "inconnu"] },
-          // Position de la case dans l'image, en millièmes : [gauche, haut, droite, bas].
+          // Position du caillou dans l'image, en millièmes : [gauche, haut, droite, bas].
           box: { type: "array", items: { type: "integer" } },
         },
       },
@@ -58,7 +58,7 @@ Pour identifier chaque lot :
 1. Si un nom est écrit et correspond à une ressource connue (même avec une orthographe, une casse ou une langue un peu différente), reprends exactement le nom connu. by = "nom".
 2. Si aucun nom n'est lisible, compare la couleur observée aux couleurs connues et reprends le nom de la ressource dont la couleur correspond le mieux. by = "couleur".
 3. Si ni le nom ni la couleur ne correspondent, mets le nom écrit s'il y en a un, sinon "Caillou <couleur>" (ex. "Caillou vert pâle"). by = "inconnu".
-Champs : quality = entier 0-1000 ou null si aucune qualité affichée ; qty = nombre ; unit = chaîne vide si aucune unité visible ; color = description en français de la couleur observée ; hex = son approximation en #rrggbb ; box = rectangle de la case entière (image du caillou et texte de qualité/quantité compris), en millièmes de la largeur et de la hauteur de l'image : [gauche, haut, droite, bas], chaque valeur de 0 à 1000.
+Champs : quality = entier 0-1000 ou null si aucune qualité affichée ; qty = nombre ; unit = chaîne vide si aucune unité visible ; color = description en français de la couleur observée ; hex = son approximation en #rrggbb ; box = rectangle serré autour du dessin du caillou seul, SANS le texte de qualité ni de quantité ni l'icône en coin, en millièmes de la largeur et de la hauteur de l'image : [gauche, haut, droite, bas], chaque valeur de 0 à 1000.
 Si tu ne vois aucune ressource, renvoie une liste vide.`;
 }
 

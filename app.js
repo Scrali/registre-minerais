@@ -439,7 +439,7 @@ async function cropTiles(file, boxes) {
     if (!Array.isArray(b) || b.length !== 4) return "";
     let [l, t, r, d] = b.map(v => Math.min(1000, Math.max(0, num(v))));
     if (r - l < 5 || d - t < 5) return "";
-    const pad = 8; // marge en millièmes, la position lue est approximative
+    const pad = 4; // petite marge en millièmes, la position lue est approximative
     l = Math.max(0, l - pad); t = Math.max(0, t - pad); r = Math.min(1000, r + pad); d = Math.min(1000, d + pad);
     const sx = l / 1000 * W, sy = t / 1000 * H, sw = (r - l) / 1000 * W, sh = (d - t) / 1000 * H;
     const k = Math.min(1, 160 / Math.max(sw, sh));
