@@ -1,4 +1,4 @@
--- Registre des minerais : nouvel écran « Raffinerie » pour les captures (résultats d'un ordre de travail terminé).
+-- Registre des minerais : nouvel écran « Raffinerie » pour les captures (ordre de travail en préparation ou terminé).
 -- À exécuter APRÈS 011, dans Supabase > SQL Editor > New query, puis Run. Peut être relancé sans risque.
 -- Ajoute seulement une valeur autorisée : aucune donnée existante n'est modifiée ni supprimée.
 
