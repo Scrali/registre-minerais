@@ -20,7 +20,7 @@ const SCHEMA = {
   required: ["terminal_type", "items"],
   properties: {
     // Écran du jeu : l'inventaire affiché est le même quel que soit l'écran ; c'est une simple information.
-    terminal_type: { type: "string", enum: ["inventaire", "ascenseur_fret", "asop", "autre", "inconnu"] },
+    terminal_type: { type: "string", enum: ["inventaire", "ascenseur_fret", "asop", "raffinerie", "autre", "inconnu"] },
     items: {
       type: "array",
       items: {
@@ -48,8 +48,9 @@ const SCHEMA = {
 function buildPrompt(known: string, refs: number) {
   return `La capture d'écran à analyser (la dernière image, juste avant ce texte) vient d'un jeu vidéo. Elle montre un inventaire, une soute, un entrepôt ou une liste de ressources (minerais, cailloux, matériaux, marchandises).
 Ignore tout ce qui n'est pas une ressource : équipement, armes, armures, outils, consommables, boutons, menus, crédits, noms de joueurs.
-ÉCRAN : indique dans terminal_type l'écran capturé : "inventaire" pour l'inventaire personnel ou local du personnage (panneaux « Personnel », « Local », vue d'équipement), "ascenseur_fret" pour l'interface d'un ascenseur de fret ou d'un terminal d'entrepôt (liste de marchandises et de caisses, chargement et déchargement), "asop" pour un terminal ASOP (gestion des vaisseaux, avec le contenu de la soute d'un vaisseau), "autre" pour un autre écran, "inconnu" si tu ne sais pas.
-FORMAT DES CASES : chaque case de minerai est un LOT.
+ÉCRAN : indique dans terminal_type l'écran capturé : "inventaire" pour l'inventaire personnel ou local du personnage (panneaux « Personnel », « Local », vue d'équipement), "ascenseur_fret" pour l'interface d'un ascenseur de fret ou d'un terminal d'entrepôt (liste de marchandises et de caisses, chargement et déchargement), "asop" pour un terminal ASOP (gestion des vaisseaux, avec le contenu de la soute d'un vaisseau), "raffinerie" pour un terminal de raffinerie (titre « RAFFINERIE », ordres de travail), "autre" pour un autre écran, "inconnu" si tu ne sais pas.
+RAFFINERIE : si l'écran est une raffinerie, ne relève QUE les lignes « matières produites » des ordres de travail TERMINÉS (panneau marqué « TERMINÉ », colonnes QUALITÉ et RENDEMENT). Chaque ligne est un lot : name = le minerai, quality = la colonne QUALITÉ, qty = la colonne RENDEMENT, unit = l'unité du rendement (en général « cSCU », indiquée à côté du rendement total). N'utilise JAMAIS la colonne « QTÉ » (minerai brut avant raffinage). Ignore les ordres « MISE EN PLACE » ou en cours (pas encore raffinés), les spécialisations de la station, le coût, la capacité, le total « RENDEMENT » de l'ordre et le contenu du vaisseau. Le suffixe « (M) » ou « [M] » ne fait pas partie du nom. Les icônes de lingot sont toutes identiques : identifie par le nom écrit (by = "nom"), et box = l'icône de la ligne.
+FORMAT DES CASES (inventaire, soute, entrepôt) : chaque case de minerai est un LOT.
 - Le nombre suivi de « Q » (ex. « 258Q ») est la QUALITÉ du lot, de 0 à 1000. Ce n'est PAS une quantité.
 - Le nombre suivi de « x » (ex. « 20x ») est la QUANTITÉ d'unités dans le lot. S'il n'y a pas de « x », la quantité est 1.
 - Exemple : une case « 258Q 20x » = 20 unités de qualité 258 ; une case « 274Q » seule = 1 unité de qualité 274.
@@ -100,7 +101,7 @@ Deno.serve(async (req) => {
     const libErr = libRes.error;
     const PREFIX = "data:image/jpeg;base64,";
     const isImg = (s: unknown): s is string => typeof s === "string" && s.startsWith(PREFIX);
-    const TERM_LABEL: Record<string, string> = { inventaire: "inventaire personnel", ascenseur_fret: "ascenseur de fret", asop: "terminal ASOP", autre: "autre écran", inconnu: "écran non précisé" };
+    const TERM_LABEL: Record<string, string> = { inventaire: "inventaire personnel", ascenseur_fret: "ascenseur de fret", asop: "terminal ASOP", raffinerie: "raffinerie", autre: "autre écran", inconnu: "écran non précisé" };
     const hint = typeof terminal_hint === "string" && terminal_hint in TERM_LABEL && terminal_hint !== "inconnu" ? terminal_hint : null;
     type View = { img: string; term: string; main?: boolean };
     const views = new Map<string, View[]>();
@@ -128,7 +129,8 @@ Deno.serve(async (req) => {
       }
       return out;
     }
-    const refBlocks = (resources ?? []).flatMap((r) => {
+    // Raffinerie : les noms sont écrits et les icônes identiques, les images de référence ne servent à rien.
+    const refBlocks = hint === "raffinerie" ? [] : (resources ?? []).flatMap((r) => {
       const chosen = pick(r, views.get(r.id) ?? []);
       return chosen.flatMap((v, i) => [
         { type: "text" as const, text: `Référence : ${r.name} (${TERM_LABEL[v.term] ?? v.term}${chosen.length > 1 ? `, vue ${i + 1}/${chosen.length}` : ""})` },

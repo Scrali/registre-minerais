@@ -985,10 +985,16 @@ async function analyzeShot(s) {
   }
   s.terminal = String(data?.terminal_type || "inconnu");
   const raw = (Array.isArray(data?.items) ? data.items : []).filter(i => i && i.name);
-  const crops = await cropTiles(s.file, raw.map(i => i.box));
+  // Raffinerie : toutes les lignes ont la même icône de lingot, inutile de la garder comme vignette ;
+  // le rendement est affiché en cSCU (centièmes de SCU) : on l'enregistre en SCU.
+  const refinery = ($("#capTerminal").value || s.terminal) === "raffinerie";
+  const crops = refinery ? [] : await cropTiles(s.file, raw.map(i => i.box));
+  const amount = i => {
+    const qty = i.qty == null ? 1 : num(i.qty), unit = String(i.unit || "").trim();
+    return refinery && !/^scu$/i.test(unit) ? { qty: Math.round(qty) / 100, unit: "SCU" } : { qty, unit };
+  };
   return raw.map((i, k) => ({
-    name: String(i.name).trim(), quality: qKey(i.quality) === "-" ? "" : qKey(i.quality), qty: i.qty == null ? 1 : num(i.qty),
-    unit: String(i.unit || "").trim(), color: String(i.color || "").trim(), hex: okHex(String(i.hex || "").trim()), by: String(i.by || ""),
+    name: String(i.name).trim(), quality: qKey(i.quality) === "-" ? "" : qKey(i.quality), ...amount(i), color: String(i.color || "").trim(), hex: okHex(String(i.hex || "").trim()), by: String(i.by || ""),
     on: true, target: matchTarget(String(i.name)), shot: s.id, crop: crops[k],
     box: Array.isArray(i.box) && i.box.length === 4 ? i.box.map(num) : null,
     confidence: i.confidence == null ? null : Math.max(0, Math.min(1, num(i.confidence))),
@@ -1318,7 +1324,7 @@ $("#commit").addEventListener("click", () => commitScan(false));
 $("#forceStale").addEventListener("click", () => commitScan(true));
 
 // ---------- bibliothèque d'images de référence ----------
-const TERM = { inventaire: "Inventaire personnel", ascenseur_fret: "Ascenseur de fret", asop: "Terminal ASOP", autre: "Autre écran", inconnu: "Écran non précisé" };
+const TERM = { inventaire: "Inventaire personnel", ascenseur_fret: "Ascenseur de fret", asop: "Terminal ASOP", raffinerie: "Raffinerie", autre: "Autre écran", inconnu: "Écran non précisé" };
 const libOf = id => st.refImages.filter(x => x.resource_id === id);
 const libById = id => st.refImages.find(x => String(x.id) === String(id));
 // Image d'un minerai pour un écran : celle choisie pour cet écran, sinon la plus récente de cet écran.

@@ -101,6 +101,21 @@ test("Écran « Terminal ASOP » (migration 010) : accepté pour les images et l
   await assert.rejects(d.query(`insert into reference_images (resource_id, terminal_type, image) values ($1, 'ecran_bidon', $2)`, [r, img("R")]));
 });
 
+test("Écran « Raffinerie » (migration 012) : accepté pour les captures et les images (relançable)", async () => {
+  const d = await freshDb({ upTo: "012" });
+  const a = await addUser(d, "Admin", "admin");
+  const r = await rpc(d, a, "create_resource", [JSON.stringify({ name: "Bexalite" }), "manuel", ""]);
+  const before = await rpc(d, a, "add_reference_image", [r, img("P"), "raffinerie", "capture", ""]);
+  assert.equal((await d.query(`select terminal_type from reference_images where id = $1`, [before])).rows[0].terminal_type, "inconnu", "avant 012 : ramené à inconnu");
+  await runRemaining(d, "012");
+  await runRemaining(d, "012");
+  await rpc(d, a, "apply_scan", [JSON.stringify({ idempotency_key: "raf1", location: "Levski", coverage: "partial", terminal_type: "raffinerie",
+    items: [{ resource_id: r, quality_key: "382", quantity: 24.71, unit: "SCU" }] }), false]);
+  assert.equal((await d.query(`select terminal_type from inventory_scans order by id desc limit 1`)).rows[0].terminal_type, "raffinerie");
+  const asop = await rpc(d, a, "add_reference_image", [r, img("Q"), "asop", "capture", ""]);
+  assert.equal((await d.query(`select terminal_type from reference_images where id = $1`, [asop])).rows[0].terminal_type, "asop", "ASOP toujours accepté");
+});
+
 test("Image choisie par écran (migration 011) : une seule par minerai et par écran, droit « catalogue »", async () => {
   const d = await freshDb();
   const a = await addUser(d, "Admin", "admin"), m = await addUser(d, "Membre");
