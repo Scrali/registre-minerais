@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="style.css?v=9">
+<link rel="stylesheet" href="style.css?v=10">
 </head>
 <body>
 
@@ -87,6 +87,7 @@
     <button type="button" role="tab" data-tab="mine" aria-selected="true">Mon inventaire</button>
     <button type="button" role="tab" data-tab="global" aria-selected="false">Inventaire global</button>
     <button type="button" role="tab" data-tab="stats" aria-selected="false">Contributions</button>
+    <button type="button" role="tab" data-tab="img" aria-selected="false" id="tabImg" hidden>Images</button>
     <button type="button" role="tab" data-tab="db" aria-selected="false" id="tabDb" hidden>Base de données</button>
   </nav>
 
@@ -304,6 +305,57 @@
     </section>
   </div>
 
+  <!-- ===== Bibliothèque d'images ===== -->
+  <div class="view" id="imgView" hidden>
+    <section class="panel">
+      <div class="panel-h">
+        <div>
+          <h2>Bibliothèque d'images</h2>
+          <div class="muted" style="font-size:14px">Images de référence de chaque minerai, classées par écran du jeu. L'IA compare chaque case d'une capture à ces images : plus elles sont justes et variées (inventaire, ascenseur de fret), meilleure est la reconnaissance.</div>
+        </div>
+        <span class="muted" id="imgCount"></span>
+      </div>
+      <div class="panel-b capture-grid">
+        <div class="drop" id="iDrop" tabindex="0" role="button" aria-label="Choisir ou coller des images de minerai">
+          <div><strong>Colle une image de caillou</strong> avec <kbd>Ctrl</kbd>+<kbd>V</kbd></div>
+          <div class="hint">ou glisse ou choisis des fichiers. Cadre un seul caillou, sans le texte (<kbd>Win</kbd>+<kbd>Maj</kbd>+<kbd>S</kbd>).</div>
+          <div class="refgrid" id="iPreview"></div>
+          <input type="file" id="iFile" accept="image/png,image/jpeg,image/webp" multiple hidden>
+        </div>
+        <div class="cap-side">
+          <label>Ressource<select id="iRes"></select></label>
+          <label>Écran d'origine
+            <select id="iAddTerm">
+              <option value="inventaire">Inventaire personnel</option>
+              <option value="ascenseur_fret">Ascenseur de fret</option>
+              <option value="autre">Autre écran</option>
+              <option value="inconnu">Non précisé</option>
+            </select>
+          </label>
+          <div class="row"><button type="button" class="primary" id="iAdd" disabled>Ajouter à la bibliothèque</button></div>
+          <div class="formmsg" id="iMsg"></div>
+        </div>
+      </div>
+    </section>
+    <section class="panel">
+      <div class="panel-h">
+        <h2>Images par minerai</h2>
+        <div class="filters">
+          <input type="search" id="iQ" placeholder="Rechercher un minerai…" aria-label="Rechercher un minerai">
+          <select id="iTerm" aria-label="Filtrer par écran">
+            <option value="">Tous les écrans</option>
+            <option value="inventaire">Inventaire personnel</option>
+            <option value="ascenseur_fret">Ascenseur de fret</option>
+            <option value="autre">Autre écran</option>
+            <option value="inconnu">Non précisé</option>
+          </select>
+        </div>
+      </div>
+      <div class="panel-b imggrid" id="imgGrid"></div>
+      <div class="empty" id="imgEmpty" hidden><span>Aucune image pour ce filtre.</span></div>
+    </section>
+  </div>
+
   <!-- ===== Base de données (administrateurs) ===== -->
   <div class="view" id="dbView" hidden>
     <section class="panel">
@@ -438,8 +490,8 @@
 </dialog>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-<script src="config.js?v=9"></script>
-<script src="scanlogic.js?v=9"></script>
-<script src="app.js?v=9"></script>
+<script src="config.js?v=10"></script>
+<script src="scanlogic.js?v=10"></script>
+<script src="app.js?v=10"></script>
 </body>
 </html>

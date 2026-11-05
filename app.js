@@ -8,14 +8,21 @@ const swatch = (h, title) => okHex(h) ? `<span class="sw" style="background:${ok
 
 const okImg = s => typeof s === "string" && s.startsWith("data:image/jpeg;base64,");
 // Images de référence d'une ressource : la principale puis les autres vues.
-const refsOf = r => [r && r.image, ...(r && Array.isArray(r.refs) ? r.refs : [])].filter(okImg);
+// Images de référence d'une ressource : la principale puis celles de la bibliothèque (ou l'ancien champ refs).
+const refsOf = r => {
+  if (!r) return [];
+  const lib = st.refImages.filter(x => x.resource_id === r.id).map(x => x.image);
+  const rest = st.libReady ? lib : (Array.isArray(r.refs) ? r.refs : []);
+  return [r.image, ...rest.filter(x => x !== r.image)].filter(okImg);
+};
 
 const cfg = window.REGISTRE_CONFIG || {};
 const configured = /^https:\/\/.+/.test(cfg.supabaseUrl || "") && cfg.supabaseKey && !/TON-PROJET|TA-CLE/.test(cfg.supabaseUrl + cfg.supabaseKey);
 const sb = configured ? window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseKey) : null;
 
 const st = { me: null, profiles: {}, resources: [], moves: [], shots: [], items: [], channel: null, recovering: false,
-  stocks: [], locations: [], legacy: [], scansMeta: [], myMoves: [], reasons: {}, diff: null, scanKey: null, v2: false };
+  stocks: [], locations: [], legacy: [], scansMeta: [], myMoves: [], reasons: {}, diff: null, scanKey: null, v2: false,
+  refImages: [], libReady: false };
 
 function show(view) {
   for (const id of ["authView", "recoveryView", "pendingView", "configView", "appView"]) $("#" + id).hidden = id !== view;
@@ -186,7 +193,7 @@ async function enter(session) {
   $("#tabDb").hidden = me.role !== "admin";
   if (me.role !== "admin" && !$("#dbView").hidden) showTab("mine");
   show("appView");
-  await Promise.all([loadProfiles(), loadResources(), loadMoves(), loadStocks()]);
+  await Promise.all([loadProfiles(), loadResources(), loadMoves(), loadStocks(), loadRefImages()]);
   loadMyMoves();
 }
 
@@ -245,7 +252,18 @@ async function loadStocks() {
 
 // Temps réel : on recharge la table concernée (quelques centaines de lignes au plus).
 const debounce = (fn, ms) => { let t; return () => { clearTimeout(t); t = setTimeout(fn, ms); }; };
-const reloadRes = debounce(loadResources, 250), reloadStocks = debounce(loadStocks, 250);
+// Bibliothèque d'images (migration 007). Avant la migration, on garde l'ancien affichage.
+async function loadRefImages() {
+  try {
+    st.refImages = await fetchAll("reference_images", "id, resource_id, terminal_type, image, added_by, created_at, source", "id");
+    st.libReady = true;
+  } catch (_) { st.refImages = []; st.libReady = false; }
+  $("#tabImg").hidden = !st.libReady;
+  if (!$("#imgView").hidden) renderImages();
+  if (!$("#dbView").hidden) renderDb();
+  if (st.items.length) renderReview();
+}
+const reloadRes = debounce(loadResources, 250), reloadStocks = debounce(loadStocks, 250), reloadLib = debounce(loadRefImages, 250);
 const reloadMoves = debounce(() => { loadMoves(); loadMyMoves(); }, 250);
 function startRealtime() {
   if (st.channel) return;
@@ -255,6 +273,7 @@ function startRealtime() {
     .on("postgres_changes", { event: "*", schema: "public", table: "user_stocks" }, reloadStocks)
     .on("postgres_changes", { event: "*", schema: "public", table: "legacy_stocks" }, reloadStocks)
     .on("postgres_changes", { event: "*", schema: "public", table: "locations" }, reloadStocks)
+    .on("postgres_changes", { event: "*", schema: "public", table: "reference_images" }, reloadLib)
     .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, payload => {
       if (st.me && payload.new && payload.new.id === st.me.id && payload.new.role !== st.me.role) return sb.auth.getSession().then(r => enter(r.data.session));
       if (st.me && st.me.role !== "pending") loadProfiles();
@@ -761,7 +780,7 @@ async function toBase64Jpeg(file) {
 
 async function analyzeShot(s) {
   const image = await toBase64Jpeg(s.file);
-  const { data, error } = await sb.functions.invoke("analyze-capture", { body: { image, media_type: "image/jpeg" } });
+  const { data, error } = await sb.functions.invoke("analyze-capture", { body: { image, media_type: "image/jpeg", terminal_hint: $("#capTerminal").value || null } });
   if (error) {
     let msg = "L'analyse a échoué. Réessaie dans un instant.";
     try { msg = (await error.context.json()).error || msg; } catch (_) {}
@@ -899,8 +918,12 @@ $("#reviewBody").addEventListener("click", async e => {
     if (!r || !it.crop) return;
     rb.disabled = true;
     try {
-      if (rb.dataset.how === "main") {
-        // L'ancienne image principale reste une vue de référence.
+      if (st.libReady) {
+        // Bibliothèque : l'image rejoint les vues de ce minerai, classée par écran ; l'ancienne principale reste.
+        const id = await addToLibrary(r.id, it.crop, itemTerminal(it), "capture");
+        if (rb.dataset.how === "main") await rpc("set_primary_image", { p_id: id });
+        await Promise.all([loadResources(), loadRefImages()]);
+      } else if (rb.dataset.how === "main") {
         const old = r.image;
         await rpc("set_resource_image", { p_id: r.id, p_image: it.crop, p_replace: true });
         if (okImg(old)) await rpc("add_resource_ref", { p_id: r.id, p_image: old }).catch(() => {});
@@ -1044,7 +1067,8 @@ async function commitScan(allowStale) {
     for (const it of st.items) {
       if (!it.on || !it.crop || done.has(it.target)) continue;
       const r = resOf(it.target); done.add(it.target);
-      if (r && !okImg(r.image)) await rpc("set_resource_image", { p_id: r.id, p_image: it.crop }).catch(err => console.warn(err));
+      if (r && !okImg(r.image)) await (st.libReady ? addToLibrary(r.id, it.crop, itemTerminal(it), "capture")
+        : rpc("set_resource_image", { p_id: r.id, p_image: it.crop })).catch(err => console.warn(err));
     }
     const n = (res.changes || []).length;
     clearCapture(); $("#capNote").value = "";
@@ -1064,10 +1088,115 @@ async function commitScan(allowStale) {
 $("#commit").addEventListener("click", () => commitScan(false));
 $("#forceStale").addEventListener("click", () => commitScan(true));
 
+// ---------- bibliothèque d'images de référence ----------
+const TERM = { inventaire: "Inventaire personnel", ascenseur_fret: "Ascenseur de fret", autre: "Autre écran", inconnu: "Écran non précisé" };
+const libOf = id => st.refImages.filter(x => x.resource_id === id);
+const libById = id => st.refImages.find(x => String(x.id) === String(id));
+// Écran d'une case lue : celui choisi pour la capture, sinon celui détecté par l'IA sur sa page.
+function itemTerminal(it) {
+  if ($("#capTerminal").value) return $("#capTerminal").value;
+  const s = st.shots.find(x => x.id === it.shot);
+  return (s && s.terminal) || "inconnu";
+}
+async function addToLibrary(resourceId, image, terminal, source) {
+  return rpc("add_reference_image", { p_resource: resourceId, p_image: image, p_terminal: terminal || "inconnu", p_source: source || "capture", p_note: "" });
+}
+
+function renderImages() {
+  const q = norm($("#iQ").value), t = $("#iTerm").value;
+  const rs = $("#iRes"), cur = rs.value;
+  rs.innerHTML = st.resources.slice().sort(byName).map(r => `<option value="${esc(r.id)}">${esc(r.name)}</option>`).join("");
+  if (cur && st.resources.some(r => r.id === cur)) rs.value = cur;
+  const list = st.resources.filter(r => !q || norm(r.name).includes(q)).sort(byName);
+  let shown = 0;
+  $("#imgGrid").innerHTML = list.map(r => {
+    const imgs = libOf(r.id).filter(x => !t || x.terminal_type === t);
+    const all = libOf(r.id), counts = {};
+    for (const x of all) counts[x.terminal_type] = (counts[x.terminal_type] || 0) + 1;
+    if (t && !imgs.length) return "";
+    shown++;
+    const summary = Object.keys(TERM).filter(k => counts[k]).map(k => `${counts[k]} ${TERM[k].toLowerCase()}`).join(" · ") || "aucune image";
+    return `<section class="imgcard">
+      <div class="imgcard-h">${resCell(r)}<span class="muted">${esc(summary)}</span></div>
+      ${imgs.length ? `<div class="imgrow">${imgs.map(x => {
+        const main = x.image === r.image, mine = st.me && (x.added_by === st.me.id || isAdmin());
+        return `<figure class="refimg${main ? " main" : ""}">
+          <img src="${esc(x.image)}" alt="${esc(r.name)}, ${esc(TERM[x.terminal_type])}" loading="lazy">
+          <figcaption><span class="tag">${esc(TERM[x.terminal_type])}</span>${main ? '<span class="tag ok">Principale</span>' : ""}
+            <span class="muted">${esc(who(x.added_by))}, ${dateTxt(x.created_at)}</span></figcaption>
+          <div class="acts">${main ? "" : `<button type="button" data-lib="main" data-id="${x.id}">Principale</button>`}${mine ? `<button type="button" class="danger" data-lib="del" data-id="${x.id}">Retirer</button>` : ""}</div>
+        </figure>`;
+      }).join("")}</div>` : '<div class="muted" style="padding:4px 0 8px">Aucune image : ajoute une capture de ce caillou ci-dessus, ou depuis la vérification d\'une capture.</div>'}
+    </section>`;
+  }).join("");
+  $("#imgEmpty").hidden = shown > 0;
+  const nRes = new Set(st.refImages.map(x => x.resource_id)).size;
+  $("#imgCount").textContent = `${st.refImages.length} image${st.refImages.length > 1 ? "s" : ""} pour ${nRes} ressource${nRes > 1 ? "s" : ""}`;
+}
+$("#iQ").addEventListener("input", renderImages);
+$("#iTerm").addEventListener("change", renderImages);
+$("#imgGrid").addEventListener("click", async e => {
+  const b = e.target.closest("[data-lib]"); if (!b) return;
+  const x = libById(b.dataset.id); if (!x) return;
+  if (b.dataset.lib === "del" && !b.classList.contains("armed")) { b.classList.add("armed"); b.textContent = "Confirmer"; return; }
+  b.disabled = true;
+  try {
+    if (b.dataset.lib === "main") await rpc("set_primary_image", { p_id: x.id });
+    else await rpc("delete_reference_image", { p_id: x.id });
+    setStatus(""); await Promise.all([loadResources(), loadRefImages()]);
+  } catch (err) { setStatus(errText(err)); b.disabled = false; }
+});
+
+// Ajout manuel : une ou plusieurs captures d'un seul caillou (recadrées avec Win+Maj+S), réduites à 240 px.
+let pendingImgs = [];
+async function toRefJpeg(file) {
+  const bmp = await createImageBitmap(file);
+  const k = Math.min(1, 240 / Math.max(bmp.width, bmp.height));
+  const c = document.createElement("canvas");
+  c.width = Math.max(1, Math.round(bmp.width * k)); c.height = Math.max(1, Math.round(bmp.height * k));
+  c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+  return c.toDataURL("image/jpeg", 0.85);
+}
+async function queueImages(files) {
+  const imgs = [...(files || [])].filter(f => f && f.type && f.type.startsWith("image/")).slice(0, 12);
+  for (const f of imgs) { try { pendingImgs.push(await toRefJpeg(f)); } catch (_) {} }
+  renderPending();
+}
+function renderPending() {
+  $("#iPreview").innerHTML = pendingImgs.map((src, i) => `<span class="refcell"><img class="rimg" src="${src}" alt="Image à ajouter ${i + 1}"><button type="button" class="tdel" data-pend="${i}" aria-label="Retirer cette image">×</button></span>`).join("");
+  $("#iAdd").disabled = !pendingImgs.length;
+  $("#iAdd").textContent = pendingImgs.length > 1 ? `Ajouter ${pendingImgs.length} images` : "Ajouter à la bibliothèque";
+}
+$("#iPreview").addEventListener("click", e => { const b = e.target.closest("[data-pend]"); if (b) { pendingImgs.splice(+b.dataset.pend, 1); renderPending(); } });
+$("#iDrop").addEventListener("click", () => $("#iFile").click());
+$("#iDrop").addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); $("#iFile").click(); } });
+$("#iFile").addEventListener("change", e => { queueImages(e.target.files); e.target.value = ""; });
+$("#iDrop").addEventListener("dragover", e => { e.preventDefault(); $("#iDrop").classList.add("over"); });
+$("#iDrop").addEventListener("dragleave", () => $("#iDrop").classList.remove("over"));
+$("#iDrop").addEventListener("drop", e => { e.preventDefault(); $("#iDrop").classList.remove("over"); queueImages(e.dataTransfer.files); });
+document.addEventListener("paste", e => {
+  if ($("#appView").hidden || $("#imgView").hidden) return;
+  const fs = [...(e.clipboardData?.files || [])].filter(f => f.type.startsWith("image/"));
+  if (fs.length) { e.preventDefault(); queueImages(fs); }
+});
+$("#iAdd").addEventListener("click", async () => {
+  const m = $("#iMsg"), res = $("#iRes").value, term = $("#iAddTerm").value;
+  if (!res) { m.textContent = "Choisis la ressource."; m.className = "formmsg err"; return; }
+  $("#iAdd").disabled = true;
+  let ok = 0;
+  try {
+    for (const src of pendingImgs) { await addToLibrary(res, src, term, "import"); ok++; }
+    pendingImgs = []; renderPending();
+    m.textContent = `${ok} image${ok > 1 ? "s ajoutées" : " ajoutée"} à « ${(resOf(res) || {}).name} » (${TERM[term].toLowerCase()}).`; m.className = "formmsg ok";
+    await Promise.all([loadResources(), loadRefImages()]);
+  } catch (err) { m.textContent = errText(err); m.className = "formmsg err"; pendingImgs = pendingImgs.slice(ok); renderPending(); }
+});
+
 // ---------- onglet Base de données (administrateurs) ----------
 function showTab(tab) {
   document.querySelectorAll("#appTabs button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
-  for (const v of ["mine", "global", "stats", "db"]) $("#" + v + "View").hidden = tab !== v;
+  for (const v of ["mine", "global", "stats", "img", "db"]) $("#" + v + "View").hidden = tab !== v;
+  if (tab === "img") renderImages();
   if (tab === "db") { renderDb(); if (!hist.loaded) loadHistory(true); }
   if (tab === "stats") loadStats();
 }
@@ -1080,7 +1209,7 @@ function dbRow(r) {
   const held = st.stocks.filter(s => s.resource_id === r.id && num(s.quantity) > 0);
   return `<tr data-id="${esc(r.id)}">
     <td><input type="color" class="e-color" id="e-color-${esc(r.id)}" value="${okHex(r.color) || "#888888"}" data-had="${okHex(r.color) ? 1 : ""}" aria-label="Couleur de ${esc(r.name)}">
-        ${refsOf(r).length ? `<div class="dbimg"><div class="refgrid">${refsOf(r).map((src, k) => `<span class="refcell"><img class="rimg" src="${esc(src)}" alt="" title="${k ? "Vue de référence " + (k + 1) : "Image principale"}"><button type="button" class="tdel" data-act="noimg" data-k="${k - 1}" title="Retirer cette image de référence" aria-label="Retirer cette image">×</button></span>`).join("")}</div><span class="muted" style="font-size:11px">${refsOf(r).length} image${refsOf(r).length > 1 ? "s" : ""} de référence</span></div>` : ""}</td>
+        ${refsOf(r).length ? `<div class="dbimg"><div class="refgrid">${refsOf(r).map((src, k) => `<span class="refcell"><img class="rimg" src="${esc(src)}" alt="" title="${k ? "Vue de référence " + (k + 1) : "Image principale"}"><button type="button" class="tdel" data-act="noimg" data-k="${k - 1}" data-src="${esc(src)}" title="Retirer cette image de référence" aria-label="Retirer cette image">×</button></span>`).join("")}</div><span class="muted" style="font-size:11px">${refsOf(r).length} image${refsOf(r).length > 1 ? "s" : ""} de référence</span></div>` : ""}</td>
     <td><input type="text" class="e-name" id="e-name-${esc(r.id)}" value="${esc(r.name)}" maxlength="80" aria-label="Nom">
         <input type="text" class="e-colorname" id="e-cn-${esc(r.id)}" value="${esc(r.color_name)}" placeholder="Description de la couleur" aria-label="Description de la couleur"></td>
     <td><input type="text" class="e-cat" id="e-cat-${esc(r.id)}" value="${esc(r.category)}" list="catList" aria-label="Catégorie"></td>
@@ -1131,6 +1260,8 @@ $("#dbBody").addEventListener("click", async e => {
     b.disabled = true;
     const k = Number(b.dataset.k);
     try {
+      const lib = st.libReady && st.refImages.find(x => x.resource_id === id && x.image === b.dataset.src);
+      if (lib) { await rpc("delete_reference_image", { p_id: lib.id }); await Promise.all([loadResources(), loadRefImages()]); renderDb(); return; }
       await rpc("remove_resource_ref", { p_id: id, p_index: k });
       const rest = Array.isArray(r.refs) ? r.refs.slice() : [];
       if (k < 0) { r.image = rest.shift() || ""; r.refs = rest; } else { rest.splice(k, 1); r.refs = rest; }

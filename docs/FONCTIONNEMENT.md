@@ -120,6 +120,7 @@ Le client en contient une copie exacte (`mergeLots`), utilisée uniquement pour 
 | `migrations/004_lieux_et_reinitialisation.sql` | lieux de stockage, réinitialisation |
 | `migrations/005_references_multiples.sql` | vues de référence multiples |
 | `migrations/006_stocks_personnels.sql` | stocks personnels par membre, lieu, qualité et unité ; relevés par comparaison ; anciens stocks non attribués (voir `docs/STOCKS_PERSONNELS.md`) |
+| `migrations/007_bibliotheque_images.sql` | bibliothèque d'images de référence (`reference_images`) : jusqu'à 50 images par minerai, classées par écran (inventaire, ascenseur de fret) ; l'analyse en choisit 4 au plus par minerai, en privilégiant l'écran de la capture |
 
 ## 8. Sécurité
 
