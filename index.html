@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="style.css?v=18">
+<link rel="stylesheet" href="style.css?v=19">
 </head>
 <body>
 
@@ -75,9 +75,12 @@
       <h1>Registre des minerais</h1>
     </div>
     <div class="stats">
-      <div class="stat"><b id="stCount">–</b><span>Ressources</span></div>
-      <div class="stat"><b id="stTotal">–</b><span>Unités chez les membres</span></div>
-      <div class="stat" id="stLowBox"><b id="stLow">–</b><span>Sous le seuil</span></div>
+      <div class="stat" title="Minerais différents dont au moins un membre a du stock (sur 16 au catalogue, par exemple)"><b id="stCount">–</b><span>Minerais en stock</span></div>
+      <div class="stat" id="stScuBox" title="Total des stocks comptés en SCU ; les objets (caisses, cailloux) sont comptés à part"><b id="stScu">–</b><span id="stScuLbl">SCU en stock</span></div>
+      <div class="stat" title="Lots de qualité 700 ou plus, tous membres et tous lieux"><b id="stHq">–</b><span>Lots Q700+</span></div>
+      <button type="button" class="stat statlink" id="stReqBox" title="Voir les demandes" hidden><b id="stReq">–</b><span id="stReqLbl">Demandes ouvertes</span></button>
+      <div class="stat" title="Membres ayant enregistré une capture ces 7 derniers jours"><b id="stActive">–</b><span>Actifs sur 7 jours</span></div>
+      <div class="stat" id="stLowBox" hidden><b id="stLow">–</b><span>Sous le seuil</span></div>
     </div>
   </header>
   <div class="account">
@@ -557,8 +560,8 @@
 </dialog>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-<script src="config.js?v=18"></script>
-<script src="scanlogic.js?v=18"></script>
-<script src="app.js?v=18"></script>
+<script src="config.js?v=19"></script>
+<script src="scanlogic.js?v=19"></script>
+<script src="app.js?v=19"></script>
 </body>
 </html>

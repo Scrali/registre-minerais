@@ -445,6 +445,35 @@ function oreClicks(tbody, open, rerender) {
   });
 }
 
+// ---------- chiffres de l'en-tête ----------
+// Calculés sur ce que le compte peut voir (son organisation, ou son seul stock sans le droit « voir »).
+function renderKpis() {
+  const all = st.stocks.filter(s => num(s.quantity) > 0);
+  $("#stCount").textContent = new Set(all.map(s => s.resource_id)).size;
+  // On n'additionne jamais des SCU et des objets : SCU d'abord, objets en dessous.
+  const scu = all.filter(s => /^scu$/i.test(s.unit || "")).reduce((t, s) => t + num(s.quantity), 0);
+  const obj = all.filter(s => !s.unit).reduce((t, s) => t + num(s.quantity), 0);
+  $("#stScu").textContent = scu || !obj ? fmt(scu) : fmt(obj);
+  $("#stScuLbl").textContent = scu || !obj ? (obj ? `SCU · ${fmt(obj)} objets` : "SCU en stock") : "Objets en stock";
+  $("#stHq").textContent = all.filter(s => s.quality_key !== "-" && +s.quality_key >= 700).length;
+  const open = st.requests.filter(r => r.org_id === (st.me && st.me.org_id) && (r.status === "open" || r.status === "in_progress"));
+  const urgent = open.filter(r => r.priority === "urgent" && r.status === "open").length;
+  $("#stReqBox").hidden = !st.reqReady;
+  $("#stReq").textContent = open.length;
+  $("#stReqLbl").textContent = urgent ? `Demandes · ${urgent} urgente${urgent > 1 ? "s" : ""}` : "Demandes en cours";
+  $("#stReqBox").classList.toggle("alert", urgent > 0);
+  const week = Date.now() - 7 * 864e5;
+  $("#stActive").textContent = new Set(st.scansMeta.filter(s => new Date(s.observed_at).getTime() >= week).map(s => s.user_id)).size;
+  // « Sous le seuil » seulement si un seuil a été défini dans la base de données.
+  const totalBy = {}; for (const s of all) totalBy[s.resource_id] = num(totalBy[s.resource_id]) + num(s.quantity);
+  const withMin = st.resources.filter(r => r.threshold > 0);
+  const low = withMin.filter(r => num(totalBy[r.id]) < r.threshold).length;
+  $("#stLowBox").hidden = !withMin.length;
+  $("#stLow").textContent = low;
+  $("#stLowBox").classList.toggle("alert", low > 0);
+}
+$("#stReqBox").addEventListener("click", () => showTab("req"));
+
 // ---------- inventaire global : somme des stocks personnels, jamais des anciens stocks ----------
 const gOpen = new Set();
 function stocksFiltered() {
@@ -468,11 +497,7 @@ function stocksFiltered() {
 function renderGlobal() {
   const all = st.stocks.filter(s => num(s.quantity) > 0);
   const totalBy = {}; for (const s of all) totalBy[s.resource_id] = num(totalBy[s.resource_id]) + num(s.quantity);
-  $("#stCount").textContent = st.resources.length;
-  $("#stTotal").textContent = fmt(all.reduce((t, s) => t + num(s.quantity), 0));
-  const low = st.resources.filter(r => r.threshold > 0 && num(totalBy[r.id]) < r.threshold).length;
-  $("#stLow").textContent = low;
-  $("#stLowBox").classList.toggle("alert", low > 0);
+  renderKpis();
 
   const cats = [...new Set(st.resources.map(r => r.category).filter(Boolean))].sort();
   const sel = $("#cat"), cur = sel.value;
@@ -1412,6 +1437,7 @@ async function loadRequests() {
   $("#tabReq").hidden = !st.reqReady;
   const open = st.requests.filter(r => r.status === "open").length;
   $("#reqCount").textContent = open; $("#reqCount").hidden = !open;
+  renderKpis();
   if (!$("#reqView").hidden) renderRequests();
 }
 // Stocks visibles qui correspondent à la demande (même ressource, qualité suffisante), hors ceux du demandeur.

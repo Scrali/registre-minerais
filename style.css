@@ -283,3 +283,8 @@ tr.grp.open>td{background:var(--soft);border-bottom-color:transparent}
 tr.rv-grp td{background:var(--soft);font-size:13px;padding-top:8px;padding-bottom:8px;border-left:3px solid var(--accent)}
 tr.rv-grp .rv-acts{display:inline-flex;margin:0 0 0 10px}
 tr.in-grp td:first-child{border-left:3px solid var(--accent)}
+
+/* Chiffres de l'en-tête : la case « demandes » est un bouton vers l'onglet */
+button.stat.statlink{background:none;border:0;padding:0;text-align:left;cursor:pointer;color:inherit;min-height:0;align-items:flex-start}
+button.stat.statlink:hover span{color:var(--accent)}
+.stat.alert b{color:var(--crit)}
