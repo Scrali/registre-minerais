@@ -526,8 +526,9 @@ async function cropTiles(file, boxes) {
     if (!Array.isArray(b) || b.length !== 4) return "";
     let [l, t, r, d] = b.map(v => Math.min(1000, Math.max(0, num(v))));
     if (r - l < 5 || d - t < 5) return "";
-    const pad = 4; // petite marge en millièmes, la position lue est approximative
-    l = Math.max(0, l - pad); t = Math.max(0, t - pad); r = Math.min(1000, r + pad); d = Math.min(1000, d + pad);
+    // Si la position couvre toute la case (format presque carré), on rogne le haut (qualité) et le bas (icône).
+    const W2 = (r - l) * W, H2 = (d - t) * H;
+    if (H2 > 0.75 * W2) { const h = d - t; t += h * 0.15; d -= h * 0.08; const w = r - l; l += w * 0.06; r -= w * 0.06; }
     const sx = l / 1000 * W, sy = t / 1000 * H, sw = (r - l) / 1000 * W, sh = (d - t) / 1000 * H;
     const k = Math.min(1, 160 / Math.max(sw, sh));
     const c = document.createElement("canvas");
@@ -607,9 +608,13 @@ function renderReview() {
   for (const it of st.items) sizes[it.group] = (sizes[it.group] || 0) + 1;
   $("#reviewBody").innerHTML = st.items.map((it, i) => {
     const linked = sizes[it.group] > 1 ? `<br>${sizes[it.group]} lots de ce type · <button type="button" class="linkbtn" data-split="${i}" title="Ce caillou n'est pas le même minerai : le nommer à part">Séparer</button>` : "";
-    const pic = it.crop ? `<img class="crop" src="${it.crop}" alt="Case lue sur la capture">` : swatch(it.hex, it.color);
     const r = st.resources.find(x => x.id === it.target);
     if (!r && it.target !== "new") it.target = "new";
+    // Vignette lue, à côté de l'image de référence de la ressource choisie pour comparer d'un coup d'œil.
+    const ref = r && okImg(r.image) ? `<img class="crop ref" src="${esc(r.image)}" alt="" title="Image de référence de ${esc(r.name)}">` : "";
+    const setRef = r && it.crop && r.image !== it.crop
+      ? `<br><button type="button" class="linkbtn" data-ref="${i}" title="Cette case montre bien ${esc(r.name)} : elle servira de modèle pour reconnaître ce minerai">${ref ? "Remplacer" : "Définir"} l'image de référence</button>` : "";
+    const pic = it.crop ? `<span class="pics"><img class="crop" src="${it.crop}" alt="Case lue sur la capture">${ref}</span>` : swatch(it.hex, it.color);
     const g = groups.get(r ? r.id : "new:" + norm(it.name));
     const before = r ? num(r.qty) : 0;
     // Seul le stock du lieu choisi change ; le résultat affiché est le total de la ressource.
@@ -620,7 +625,7 @@ function renderReview() {
       <td><input type="checkbox" data-f="on" id="rv-on-${i}" ${it.on ? "checked" : ""} aria-label="Inclure cette ligne"></td>
       <td class="pg">p. ${shotPage(it.shot) || "–"}</td>
       <td><input type="text" data-f="name" id="rv-name-${i}" value="${esc(it.name)}"></td>
-      <td><div style="display:flex;align-items:center;min-width:130px">${pic}<span class="colordesc">${esc(it.color || "–")}${it.by === "couleur" ? "<br>reconnu par la couleur" : ""}${linked}</span></div></td>
+      <td><div style="display:flex;align-items:center;min-width:130px">${pic}<span class="colordesc">${esc(it.color || "–")}${it.by === "couleur" ? "<br>reconnu par l'apparence" : ""}${linked}${setRef}</span></div></td>
       <td><input type="number" class="qin" step="1" min="0" max="1000" placeholder="?" data-f="quality" id="rv-q-${i}" value="${esc(it.quality)}" aria-label="Qualité"></td>
       <td><input type="number" step="any" min="0" data-f="qty" id="rv-qty-${i}" value="${it.qty}"></td>
       <td><select data-f="target" id="rv-target-${i}"><option value="new"${it.target === "new" ? " selected" : ""}>Nouvelle ressource</option>${opts.map(o => `<option value="${esc(o.id)}"${o.id === it.target ? " selected" : ""}>${esc(o.name)}</option>`).join("")}</select></td>
@@ -632,7 +637,16 @@ function renderReview() {
 }
 // « Séparer » : ce lot quitte son groupe de couleur et prend un nom à lui.
 let splitSeq = 0;
-$("#reviewBody").addEventListener("click", e => {
+$("#reviewBody").addEventListener("click", async e => {
+  const rb = e.target.closest("[data-ref]");
+  if (rb) {
+    const it = st.items[+rb.dataset.ref], r = st.resources.find(x => x.id === it.target);
+    if (!r || !it.crop) return;
+    rb.disabled = true;
+    try { await rpc("set_resource_image", { p_id: r.id, p_image: it.crop, p_replace: true }); r.image = it.crop; renderReview(); renderStock(); setStatus(""); }
+    catch (err) { setStatus(errText(err)); rb.disabled = false; }
+    return;
+  }
   const b = e.target.closest("[data-split]"); if (!b) return;
   const it = st.items[+b.dataset.split];
   // Emmène aussi les lots du groupe dont la couleur décrite est la même (même type de caillou).

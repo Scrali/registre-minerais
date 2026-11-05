@@ -41,8 +41,8 @@ const SCHEMA = {
   },
 };
 
-function buildPrompt(known: string) {
-  return `Cette image est une capture d'écran d'un jeu vidéo. Elle montre un inventaire, une soute, un entrepôt ou une liste de ressources (minerais, cailloux, matériaux, marchandises).
+function buildPrompt(known: string, refs: number) {
+  return `La capture d'écran à analyser (la dernière image, juste avant ce texte) vient d'un jeu vidéo. Elle montre un inventaire, une soute, un entrepôt ou une liste de ressources (minerais, cailloux, matériaux, marchandises).
 Ignore tout ce qui n'est pas une ressource : équipement, armes, armures, outils, consommables, boutons, menus, crédits, noms de joueurs.
 FORMAT DES CASES : chaque case de minerai est un LOT.
 - Le nombre suivi de « Q » (ex. « 258Q ») est la QUALITÉ du lot, de 0 à 1000. Ce n'est PAS une quantité.
@@ -54,11 +54,12 @@ Dans ce jeu, la COULEUR et la FORME du caillou indiquent quel minerai c'est. Pou
 Attention aux teintes proches : par exemple une roche brun-gris foncé et une roche brun-rouge sont deux minerais DIFFÉRENTS. Compare les cases entre elles et donne un nom différent à chaque type de caillou distinct ; ne regroupe sous un même nom que les cases dont le caillou est vraiment identique.
 Ressources connues du registre, avec leur couleur quand elle est renseignée :
 ${known}
-Pour identifier chaque lot :
+${refs ? `IMAGES DE RÉFÉRENCE : avant la capture, tu as reçu ${refs} image(s) de référence, chacune précédée du nom de sa ressource. Ce sont des vignettes du caillou tel qu'il apparaît dans l'inventaire du jeu. C'est la source la plus fiable pour reconnaître un caillou : compare chaque case de la capture à TOUTES les références (teinte exacte, taches et reflets, rugosité, silhouette). Plusieurs minerais se ressemblent beaucoup (par exemple deux roches brun-rouge) : départage-les sur les détails, et choisis la référence la plus proche, pas la première qui convient à peu près.
+` : ""}Pour identifier chaque lot :
 1. Si un nom est écrit et correspond à une ressource connue (même avec une orthographe, une casse ou une langue un peu différente), reprends exactement le nom connu. by = "nom".
-2. Si aucun nom n'est lisible, compare la couleur observée aux couleurs connues et reprends le nom de la ressource dont la couleur correspond le mieux. by = "couleur".
+2. Si aucun nom n'est lisible, compare le caillou aux images de référence et aux couleurs connues, et reprends le nom de la ressource qui correspond le mieux. by = "couleur".
 3. Si ni le nom ni la couleur ne correspondent, mets le nom écrit s'il y en a un, sinon "Caillou <couleur>" (ex. "Caillou vert pâle"). by = "inconnu".
-Champs : quality = entier 0-1000 ou null si aucune qualité affichée ; qty = nombre ; unit = chaîne vide si aucune unité visible ; color = description en français de la couleur observée ; hex = son approximation en #rrggbb ; box = rectangle serré autour du dessin du caillou seul, SANS le texte de qualité ni de quantité ni l'icône en coin, en millièmes de la largeur et de la hauteur de l'image : [gauche, haut, droite, bas], chaque valeur de 0 à 1000.
+Champs : quality = entier 0-1000 ou null si aucune qualité affichée ; qty = nombre ; unit = chaîne vide si aucune unité visible ; color = description en français de la couleur observée ; hex = son approximation en #rrggbb ; box = rectangle serré autour du dessin du caillou seul, SANS le texte de qualité ni de quantité ni l'icône en coin, en millièmes de la largeur et de la hauteur de la capture : [gauche, haut, droite, bas], chaque valeur de 0 à 1000.
 Si tu ne vois aucune ressource, renvoie une liste vide.`;
 }
 
@@ -80,7 +81,17 @@ Deno.serve(async (req) => {
     }
     if (image.length > 7_000_000) return json({ error: "Image trop lourde (5 Mo maximum)." }, 413);
 
-    const { data: resources } = await sb.from("resources").select("name, unit, color, color_name").order("name");
+    const { data: resources } = await sb.from("resources").select("name, unit, color, color_name, image").order("name");
+    // Vignette de référence de chaque ressource (enregistrée lors d'une capture précédente).
+    const PREFIX = "data:image/jpeg;base64,";
+    const refBlocks = (resources ?? [])
+      .filter((r) => typeof r.image === "string" && r.image.startsWith(PREFIX))
+      .slice(0, 40)
+      .flatMap((r) => [
+        { type: "text" as const, text: `Référence : ${r.name}` },
+        { type: "image" as const, source: { type: "base64" as const, media_type: "image/jpeg" as const, data: r.image.slice(PREFIX.length) } },
+      ]);
+    const refs = refBlocks.length / 2;
     const known = (resources ?? [])
       .map((r) => {
         const c = [r.color_name, r.color].filter(Boolean).join(", ");
@@ -98,8 +109,10 @@ Deno.serve(async (req) => {
       messages: [{
         role: "user",
         content: [
+          ...refBlocks,
+          { type: "text", text: refs ? "Capture d'écran à analyser :" : "Capture d'écran :" },
           { type: "image", source: { type: "base64", media_type: media_type as MediaType, data: image } },
-          { type: "text", text: buildPrompt(known) },
+          { type: "text", text: buildPrompt(known, refs) },
         ],
       }],
     });

@@ -206,3 +206,6 @@ tr.undone td:last-child{text-decoration:none}
 .where b{color:var(--ink);font-weight:600}
 .danger-zone{border-color:var(--crit)}
 .danger-zone h2{color:var(--crit)}
+.pics{display:flex;gap:4px;flex:none;margin-right:8px}
+.pics .crop{margin-right:0}
+.crop.ref{width:44px;height:44px;opacity:.9;outline:2px solid var(--accent);outline-offset:-2px}
