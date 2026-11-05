@@ -84,3 +84,19 @@ test("Reprise des images existantes à la migration (relançable)", async () => 
   assert.deepEqual(rows.map(x => [x.image, x.source, x.terminal_type]), [[img("M"), "reprise", "inconnu"], [img("N"), "reprise", "inconnu"]]);
   assert.equal((await d.query(`select image from resources where id = $1`, [r])).rows[0].image, img("M"), "image principale conservée");
 });
+
+test("Écran « Terminal ASOP » (migration 010) : accepté pour les images et les captures (relançable)", async () => {
+  const d = await freshDb({ upTo: "010" });
+  const a = await addUser(d, "Admin", "admin");
+  const r = await rpc(d, a, "create_resource", [JSON.stringify({ name: "Hadanite" }), "manuel", ""]);
+  const before = await rpc(d, a, "add_reference_image", [r, img("P"), "asop", "capture", ""]);
+  assert.equal((await d.query(`select terminal_type from reference_images where id = $1`, [before])).rows[0].terminal_type, "inconnu", "avant 010 : ramené à inconnu");
+  await runRemaining(d, "010");
+  await runRemaining(d, "010");
+  const id = await rpc(d, a, "add_reference_image", [r, img("Q"), "asop", "capture", ""]);
+  assert.equal((await d.query(`select terminal_type from reference_images where id = $1`, [id])).rows[0].terminal_type, "asop");
+  await rpc(d, a, "apply_scan", [JSON.stringify({ idempotency_key: "asop1", location: "Levski", coverage: "partial", terminal_type: "asop",
+    items: [{ resource_id: r, quality_key: "500", quantity: 3, unit: "" }] }), false]);
+  assert.equal((await d.query(`select terminal_type from inventory_scans order by id desc limit 1`)).rows[0].terminal_type, "asop");
+  await assert.rejects(d.query(`insert into reference_images (resource_id, terminal_type, image) values ($1, 'ecran_bidon', $2)`, [r, img("R")]));
+});

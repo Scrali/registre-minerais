@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="style.css?v=15">
+<link rel="stylesheet" href="style.css?v=16">
 </head>
 <body>
 
@@ -132,6 +132,7 @@
               <option value="">Détection automatique</option>
               <option value="inventaire">Inventaire personnel</option>
               <option value="ascenseur_fret">Ascenseur de fret</option>
+              <option value="asop">Terminal ASOP</option>
               <option value="autre">Autre écran</option>
             </select>
           </label>
@@ -180,6 +181,7 @@
           <button class="primary" id="commit">Enregistrer</button>
           <button type="button" id="diffBack">Revenir à la lecture</button>
           <button type="button" class="danger" id="forceStale" hidden>Appliquer quand même</button>
+          <label class="perm" title="Une vignette par minerai et par écran (inventaire, ascenseur de fret, ASOP), tant que ce minerai en a moins de 5 pour cet écran"><input type="checkbox" id="capLearn" checked> Ajouter les vignettes vérifiées à la bibliothèque d'images</label>
           <span class="muted" id="commitMsg" style="font-size:14px"></span>
         </div>
       </div>
@@ -385,6 +387,7 @@
             <select id="iAddTerm">
               <option value="inventaire">Inventaire personnel</option>
               <option value="ascenseur_fret">Ascenseur de fret</option>
+              <option value="asop">Terminal ASOP</option>
               <option value="autre">Autre écran</option>
               <option value="inconnu">Non précisé</option>
             </select>
@@ -403,6 +406,7 @@
             <option value="">Tous les écrans</option>
             <option value="inventaire">Inventaire personnel</option>
             <option value="ascenseur_fret">Ascenseur de fret</option>
+              <option value="asop">Terminal ASOP</option>
             <option value="autre">Autre écran</option>
             <option value="inconnu">Non précisé</option>
           </select>
@@ -553,8 +557,8 @@
 </dialog>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-<script src="config.js?v=15"></script>
-<script src="scanlogic.js?v=15"></script>
-<script src="app.js?v=15"></script>
+<script src="config.js?v=16"></script>
+<script src="scanlogic.js?v=16"></script>
+<script src="app.js?v=16"></script>
 </body>
 </html>

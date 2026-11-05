@@ -1232,17 +1232,25 @@ async function commitScan(allowStale) {
   const reasons = {}; for (const [k, v] of Object.entries(st.reasons)) if (v) reasons[k] = v;
   try {
     const res = await rpc("apply_scan", { p: scanPayload({ idempotency_key: st.scanKey, state_token: st.diff.state_token, reasons, allow_stale: !!allowStale }), p_dry_run: false });
-    // Première image du caillou pour les ressources qui n'en ont pas encore.
-    const done = new Set();
+    // Vignettes vérifiées → bibliothèque : une par minerai et par écran, tant qu'il en a moins de 5 pour cet écran.
+    // Sans la case cochée, seulement la première image des ressources qui n'en ont aucune.
+    const learn = $("#capLearn").checked && st.libReady, done = new Set();
+    let learned = 0;
     for (const it of st.items) {
-      if (!it.on || !it.crop || done.has(it.target)) continue;
-      const r = resOf(it.target); done.add(it.target);
-      if (r && !okImg(r.image)) await (st.libReady ? addToLibrary(r.id, it.crop, itemTerminal(it), "capture")
-        : rpc("set_resource_image", { p_id: r.id, p_image: it.crop })).catch(err => console.warn(err));
+      const r = resOf(it.target), term = itemTerminal(it), key = it.target + "|" + term;
+      if (!it.on || !it.crop || !r || done.has(key)) continue;
+      done.add(key);
+      if (!okImg(r.image)) {
+        await (st.libReady ? addToLibrary(r.id, it.crop, term, "capture") : rpc("set_resource_image", { p_id: r.id, p_image: it.crop }))
+          .then(() => learned++, err => console.warn(err));
+      } else if (learn && !refsOf(r).includes(it.crop) && libOf(r.id).filter(x => x.terminal_type === term).length < 5) {
+        await addToLibrary(r.id, it.crop, term, "capture").then(() => learned++, err => console.warn(err));
+      }
     }
+    if (learned) loadRefImages();
     const n = (res.changes || []).length;
     clearCapture(); $("#capNote").value = "";
-    capMsg(`Relevé enregistré pour ${place} : ${n} variation${n > 1 ? "s" : ""}${res.replayed ? " (cette opération était déjà enregistrée)" : ""}.`);
+    capMsg(`Relevé enregistré pour ${place} : ${n} variation${n > 1 ? "s" : ""}${res.replayed ? " (cette opération était déjà enregistrée)" : ""}${learned ? ` · ${learned} vignette${learned > 1 ? "s ajoutées" : " ajoutée"} à la bibliothèque` : ""}.`);
     await loadStocks(); loadMyMoves();
   } catch (err) {
     const m = errText(err);
@@ -1259,7 +1267,7 @@ $("#commit").addEventListener("click", () => commitScan(false));
 $("#forceStale").addEventListener("click", () => commitScan(true));
 
 // ---------- bibliothèque d'images de référence ----------
-const TERM = { inventaire: "Inventaire personnel", ascenseur_fret: "Ascenseur de fret", autre: "Autre écran", inconnu: "Écran non précisé" };
+const TERM = { inventaire: "Inventaire personnel", ascenseur_fret: "Ascenseur de fret", asop: "Terminal ASOP", autre: "Autre écran", inconnu: "Écran non précisé" };
 const libOf = id => st.refImages.filter(x => x.resource_id === id);
 const libById = id => st.refImages.find(x => String(x.id) === String(id));
 // Écran d'une case lue : celui choisi pour la capture, sinon celui détecté par l'IA sur sa page.

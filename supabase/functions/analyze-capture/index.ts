@@ -20,7 +20,7 @@ const SCHEMA = {
   required: ["terminal_type", "items"],
   properties: {
     // Écran du jeu : l'inventaire affiché est le même quel que soit l'écran ; c'est une simple information.
-    terminal_type: { type: "string", enum: ["inventaire", "ascenseur_fret", "autre", "inconnu"] },
+    terminal_type: { type: "string", enum: ["inventaire", "ascenseur_fret", "asop", "autre", "inconnu"] },
     items: {
       type: "array",
       items: {
@@ -48,7 +48,7 @@ const SCHEMA = {
 function buildPrompt(known: string, refs: number) {
   return `La capture d'écran à analyser (la dernière image, juste avant ce texte) vient d'un jeu vidéo. Elle montre un inventaire, une soute, un entrepôt ou une liste de ressources (minerais, cailloux, matériaux, marchandises).
 Ignore tout ce qui n'est pas une ressource : équipement, armes, armures, outils, consommables, boutons, menus, crédits, noms de joueurs.
-ÉCRAN : indique dans terminal_type l'écran capturé : "inventaire" pour l'inventaire personnel ou local du personnage (panneaux « Personnel », « Local », vue d'équipement), "ascenseur_fret" pour l'interface d'un ascenseur de fret ou d'un terminal d'entrepôt (liste de marchandises et de caisses, chargement et déchargement), "autre" pour un autre écran, "inconnu" si tu ne sais pas.
+ÉCRAN : indique dans terminal_type l'écran capturé : "inventaire" pour l'inventaire personnel ou local du personnage (panneaux « Personnel », « Local », vue d'équipement), "ascenseur_fret" pour l'interface d'un ascenseur de fret ou d'un terminal d'entrepôt (liste de marchandises et de caisses, chargement et déchargement), "asop" pour un terminal ASOP (gestion des vaisseaux, avec le contenu de la soute d'un vaisseau), "autre" pour un autre écran, "inconnu" si tu ne sais pas.
 FORMAT DES CASES : chaque case de minerai est un LOT.
 - Le nombre suivi de « Q » (ex. « 258Q ») est la QUALITÉ du lot, de 0 à 1000. Ce n'est PAS une quantité.
 - Le nombre suivi de « x » (ex. « 20x ») est la QUANTITÉ d'unités dans le lot. S'il n'y a pas de « x », la quantité est 1.
@@ -59,7 +59,7 @@ Dans ce jeu, la COULEUR et la FORME du caillou indiquent quel minerai c'est. Pou
 Attention aux teintes proches : par exemple une roche brun-gris foncé et une roche brun-rouge sont deux minerais DIFFÉRENTS. Compare les cases entre elles et donne un nom différent à chaque type de caillou distinct ; ne regroupe sous un même nom que les cases dont le caillou est vraiment identique.
 Ressources connues du registre, avec leur couleur quand elle est renseignée :
 ${known}
-${refs ? `IMAGES DE RÉFÉRENCE : avant la capture, tu as reçu ${refs} image(s) de référence, chacune précédée du nom de sa ressource et de l'écran du jeu où elle a été prise. Ce sont des vignettes du caillou tel qu'il apparaît dans le jeu. Une même ressource peut avoir plusieurs vues : le caillou s'affiche un peu différemment selon l'écran (inventaire personnel, interface d'un ascenseur de fret, entrepôt…), avec un éclairage, un angle ou un fond différents ; une case correspond à une ressource si elle ressemble à N'IMPORTE LAQUELLE de ses vues. C'est la source la plus fiable pour reconnaître un caillou : compare chaque case de la capture à TOUTES les références (teinte exacte, taches et reflets, rugosité, silhouette). Plusieurs minerais se ressemblent beaucoup (par exemple deux roches brun-rouge) : départage-les sur les détails, et choisis la référence la plus proche, pas la première qui convient à peu près.
+${refs ? `IMAGES DE RÉFÉRENCE : avant la capture, tu as reçu ${refs} image(s) de référence, chacune précédée du nom de sa ressource et de l'écran du jeu où elle a été prise. Ce sont des vignettes du caillou tel qu'il apparaît dans le jeu. Une même ressource peut avoir plusieurs vues : le caillou s'affiche un peu différemment selon l'écran (inventaire personnel, interface d'un ascenseur de fret, terminal ASOP, entrepôt…), avec un éclairage, un angle ou un fond différents ; une case correspond à une ressource si elle ressemble à N'IMPORTE LAQUELLE de ses vues. C'est la source la plus fiable pour reconnaître un caillou : compare chaque case de la capture à TOUTES les références (teinte exacte, taches et reflets, rugosité, silhouette). Plusieurs minerais se ressemblent beaucoup (par exemple deux roches brun-rouge) : départage-les sur les détails, et choisis la référence la plus proche, pas la première qui convient à peu près.
 ` : ""}Pour identifier chaque lot :
 1. Si un nom est écrit et correspond à une ressource connue (même avec une orthographe, une casse ou une langue un peu différente), reprends exactement le nom connu. by = "nom".
 2. Si aucun nom n'est lisible, compare le caillou aux images de référence et aux couleurs connues, et reprends le nom de la ressource qui correspond le mieux. by = "couleur".
@@ -96,7 +96,7 @@ Deno.serve(async (req) => {
       .select("resource_id, terminal_type, image").order("created_at", { ascending: false });
     const PREFIX = "data:image/jpeg;base64,";
     const isImg = (s: unknown): s is string => typeof s === "string" && s.startsWith(PREFIX);
-    const TERM_LABEL: Record<string, string> = { inventaire: "inventaire personnel", ascenseur_fret: "ascenseur de fret", autre: "autre écran", inconnu: "écran non précisé" };
+    const TERM_LABEL: Record<string, string> = { inventaire: "inventaire personnel", ascenseur_fret: "ascenseur de fret", asop: "terminal ASOP", autre: "autre écran", inconnu: "écran non précisé" };
     const hint = typeof terminal_hint === "string" && terminal_hint in TERM_LABEL && terminal_hint !== "inconnu" ? terminal_hint : null;
     type View = { img: string; term: string };
     const views = new Map<string, View[]>();
