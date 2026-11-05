@@ -119,6 +119,7 @@ Le client en contient une copie exacte (`mergeLots`), utilisée uniquement pour 
 | `migrations/003_image_ressource.sql` | image principale |
 | `migrations/004_lieux_et_reinitialisation.sql` | lieux de stockage, réinitialisation |
 | `migrations/005_references_multiples.sql` | vues de référence multiples |
+| `migrations/006_stocks_personnels.sql` | stocks personnels par membre, lieu, qualité et unité ; relevés par comparaison ; anciens stocks non attribués (voir `docs/STOCKS_PERSONNELS.md`) |
 
 ## 8. Sécurité
 

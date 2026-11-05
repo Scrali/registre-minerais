@@ -14,7 +14,8 @@ const cfg = window.REGISTRE_CONFIG || {};
 const configured = /^https:\/\/.+/.test(cfg.supabaseUrl || "") && cfg.supabaseKey && !/TON-PROJET|TA-CLE/.test(cfg.supabaseUrl + cfg.supabaseKey);
 const sb = configured ? window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseKey) : null;
 
-const st = { me: null, profiles: {}, resources: [], moves: [], shots: [], items: [], channel: null, recovering: false };
+const st = { me: null, profiles: {}, resources: [], moves: [], shots: [], items: [], channel: null, recovering: false,
+  stocks: [], locations: [], legacy: [], scansMeta: [], myMoves: [], reasons: {}, diff: null, scanKey: null, v2: false };
 
 function show(view) {
   for (const id of ["authView", "recoveryView", "pendingView", "configView", "appView"]) $("#" + id).hidden = id !== view;
@@ -182,10 +183,11 @@ async function enter(session) {
   $("#meRole").textContent = me.role === "admin" ? "Administrateur" : "Membre";
   $("#meRole").className = "role" + (me.role === "admin" ? " admin" : "");
   $("#openMembers").hidden = me.role !== "admin";
-  $("#appTabs").hidden = me.role !== "admin";
-  if (me.role !== "admin") showTab("stocks");
+  $("#tabDb").hidden = me.role !== "admin";
+  if (me.role !== "admin" && !$("#dbView").hidden) showTab("mine");
   show("appView");
-  await Promise.all([loadProfiles(), loadResources(), loadMoves()]);
+  await Promise.all([loadProfiles(), loadResources(), loadMoves(), loadStocks()]);
+  loadMyMoves();
 }
 
 // ---------- données ----------
@@ -196,13 +198,15 @@ async function loadProfiles() {
   $("#pendingCount").textContent = pend; $("#pendingCount").hidden = !pend;
   if ($("#members").open) renderMembers();
   renderLog();
+  renderAllStocks();
+  memberOptions($("#sMember"), "Tous les membres");
 }
 async function loadResources() {
   const { data, error } = await sb.from("resources").select("*").order("name");
   if (error) return setStatus("Impossible de charger les stocks : " + errText(error));
   setStatus("");
   st.resources = data || [];
-  renderStock();
+  renderAllStocks();
   if (!$("#dbView").hidden) renderDb();
 }
 async function loadMoves() {
@@ -211,14 +215,46 @@ async function loadMoves() {
   renderLog();
 }
 
+// Lecture paginée (l'API renvoie 1000 lignes au plus par requête).
+async function fetchAll(table, select, order) {
+  const out = [];
+  for (let p = 0; ; p++) {
+    const { data, error } = await sb.from(table).select(select).order(order).range(p * 1000, p * 1000 + 999);
+    if (error) throw error;
+    out.push(...data);
+    if (data.length < 1000) return out;
+  }
+}
+// Stocks personnels, lieux, anciens stocks non attribués et date des derniers relevés.
+async function loadStocks() {
+  try {
+    const [stocks, locations, legacy, scans] = await Promise.all([
+      fetchAll("user_stocks", "*", "id"), fetchAll("locations", "*", "name"), fetchAll("legacy_stocks", "*", "id"),
+      sb.from("inventory_scans").select("user_id, location_id, observed_at, coverage_status").eq("validation_status", "applied")
+        .order("observed_at", { ascending: false }).limit(2000).then(r => { if (r.error) throw r.error; return r.data; }),
+    ]);
+    Object.assign(st, { stocks, locations, legacy, scansMeta: scans, v2: true });
+  } catch (err) {
+    st.v2 = false;
+    setStatus(/does not exist|schema cache|relation/i.test(errText(err))
+      ? "La base de données n'est pas encore à jour : un administrateur doit exécuter la migration 006 (stocks personnels)."
+      : "Impossible de charger les inventaires : " + errText(err));
+  }
+  renderAllStocks();
+}
+
 // Temps réel : on recharge la table concernée (quelques centaines de lignes au plus).
 const debounce = (fn, ms) => { let t; return () => { clearTimeout(t); t = setTimeout(fn, ms); }; };
-const reloadRes = debounce(loadResources, 250), reloadMoves = debounce(loadMoves, 250);
+const reloadRes = debounce(loadResources, 250), reloadStocks = debounce(loadStocks, 250);
+const reloadMoves = debounce(() => { loadMoves(); loadMyMoves(); }, 250);
 function startRealtime() {
   if (st.channel) return;
   st.channel = sb.channel("registre")
     .on("postgres_changes", { event: "*", schema: "public", table: "resources" }, reloadRes)
     .on("postgres_changes", { event: "*", schema: "public", table: "movements" }, reloadMoves)
+    .on("postgres_changes", { event: "*", schema: "public", table: "user_stocks" }, reloadStocks)
+    .on("postgres_changes", { event: "*", schema: "public", table: "legacy_stocks" }, reloadStocks)
+    .on("postgres_changes", { event: "*", schema: "public", table: "locations" }, reloadStocks)
     .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, payload => {
       if (st.me && payload.new && payload.new.id === st.me.id && payload.new.role !== st.me.role) return sb.auth.getSession().then(r => enter(r.data.session));
       if (st.me && st.me.role !== "pending") loadProfiles();
@@ -238,37 +274,84 @@ const createResource = (v, source, note) =>
   rpc("create_resource", { p: { name: v.name, category: v.category || "", unit: v.unit || "", color: okHex(v.color), color_name: v.color_name || "", threshold: v.threshold || 0,
     ...(v.places ? { places: v.places } : { lots: clean({ ...(v.lots || {}) }), place: v.place || "" }) }, p_source: source, p_note: note || "" });
 
-// ---------- stock ----------
-const isLow = r => r.threshold > 0 && num(r.qty) < r.threshold;
-function filtered() {
-  const q = norm($("#q").value), c = $("#cat").value;
-  return st.resources
-    .filter(r => (!q || norm(r.name).includes(q) || norm(r.category).includes(q)) && (!c || r.category === c))
-    .sort((a, b) => (a.category || "").localeCompare(b.category || "") || a.name.localeCompare(b.name));
+// ---------- inventaires personnels : affichage commun ----------
+const KIND = {
+  initial: "Stock initial", increase: "Hausse à classer", deposit: "Dépôt", production: "Production minière",
+  transfer_in: "Transfert reçu", purchase: "Achat", decrease: "Baisse à classer", withdrawal: "Retrait",
+  sale: "Vente", transfer_out: "Transfert envoyé", refining: "Raffinage", consumption: "Consommation", loss: "Perte",
+  correction: "Correction", legacy_attribution: "Ancien stock attribué",
+};
+const INC_KINDS = ["production", "deposit", "transfer_in", "purchase"];
+const DEC_KINDS = ["sale", "transfer_out", "refining", "consumption", "loss", "withdrawal"];
+const qLabel = q => (q === "-" || q == null) ? "Q?" : "Q" + q;
+const unitTxt = u => u ? " " + u : "";
+const locName = id => (st.locations.find(l => l.id === id) || {}).name || "Lieu inconnu";
+const who = id => (st.profiles[id] || {}).pseudo || "Membre";
+const resOf = id => st.resources.find(r => r.id === id);
+const isAdmin = () => !!(st.me && st.me.role === "admin");
+const byName = (a, b) => ((a && a.name) || "").localeCompare((b && b.name) || "");
+// Quantités par unité native : « 120 · 30 SCU » (on n'additionne jamais des objets et des SCU).
+function unitSums(rows, field = "quantity") { const m = {}; for (const r of rows) m[r.unit || ""] = num(m[r.unit || ""]) + num(r[field]); return m; }
+const sumsText = m => Object.keys(m).length ? Object.entries(m).sort().map(([u, v]) => fmt(v) + unitTxt(u)).join(" · ") : "–";
+const dateTxt = iso => iso ? new Date(iso).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "–";
+function resCell(r, fallback) {
+  const img = r && okImg(r.image) ? `<img class="rimg" src="${esc(r.image)}" alt="">` : swatch(r && r.color);
+  return `${img}<span class="res-name">${esc(r ? r.name : fallback || "Ressource supprimée")}</span>`;
 }
-
+function memberOptions(sel, allLabel) {
+  const cur = sel.value;
+  const list = Object.values(st.profiles).filter(p => p.role !== "pending").sort((a, b) => a.pseudo.localeCompare(b.pseudo));
+  sel.innerHTML = (allLabel ? `<option value="">${allLabel}</option>` : "")
+    + list.map(p => `<option value="${esc(p.id)}">${esc(p.pseudo)}${st.me && p.id === st.me.id ? " (moi)" : ""}</option>`).join("");
+  if ([...sel.options].some(o => o.value === cur)) sel.value = cur;
+  else if (!allLabel && st.me) sel.value = st.me.id;
+}
+function locationOptions(sel, ids, allLabel) {
+  const cur = sel.value;
+  const locs = st.locations.filter(l => !ids || ids.has(l.id)).sort(byName);
+  sel.innerHTML = `<option value="">${allLabel}</option>` + locs.map(l => `<option value="${esc(l.id)}">${esc(l.name)}</option>`).join("");
+  if ([...sel.options].some(o => o.value === cur)) sel.value = cur;
+}
+// Lieux proposés : ceux déjà enregistrés, puis les stations et villes du jeu.
 function renderPlaceLists() {
-  const used = usedPlaces(), known = new Set(GAME_PLACES.map(p => p[0]));
-  $("#placeList").innerHTML = used.filter(p => !known.has(p)).map(p => `<option value="${esc(p)}" label="Utilisé dans le registre">`).join("")
+  const known = new Set(GAME_PLACES.map(p => ScanLogic.norm(p[0])));
+  $("#placeList").innerHTML = st.locations.filter(l => !known.has(ScanLogic.norm(l.name))).map(l => `<option value="${esc(l.name)}" label="Déjà enregistré">`).join("")
     + GAME_PLACES.map(([n, w]) => `<option value="${esc(n)}" label="${esc(w)}">`).join("");
-  const sel = $("#placeF"), cur = sel.value;
-  const hasNone = st.resources.some(r => placesOf(r)[""]);
-  sel.innerHTML = '<option value="*">Tous les lieux</option>' + used.map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join("")
-    + (hasNone ? `<option value="">${NO_PLACE}</option>` : "");
-  sel.value = [...sel.options].some(o => o.value === cur) ? cur : "*";
 }
-// Lots affichés : ceux du lieu filtré, ou le total.
-const viewPlace = () => $("#placeF").value;
-function viewLots(r) { const p = viewPlace(); return p === "*" ? lotsOf(r) : (placesOf(r)[p] || {}); }
-
-function renderStock() {
+function renderAllStocks() {
   renderPlaceLists();
-  const vp = viewPlace();
-  const rows = filtered().filter(r => vp === "*" || placesOf(r)[vp]);
-  $("#stockEmpty").hidden = st.resources.length > 0;
+  memberOptions($("#capOwner"));
+  $("#capOwnerBox").hidden = !isAdmin();
+  renderGlobal(); renderMine(); renderLegacy();
+  if (st.items.length) renderReview();
+}
+
+// ---------- inventaire global : somme des stocks personnels, jamais des anciens stocks ----------
+const gOpen = new Set();
+function stocksFiltered() {
+  const q = norm($("#q").value), c = $("#cat").value, loc = $("#gLoc").value, mb = $("#gMember").value;
+  const qmin = $("#gQmin").value === "" ? null : num($("#gQmin").value), qmax = $("#gQmax").value === "" ? null : num($("#gQmax").value);
+  return st.stocks.filter(s => {
+    if (!(num(s.quantity) > 0)) return false;
+    const r = resOf(s.resource_id);
+    if (q && !(r && (norm(r.name).includes(q) || norm(r.category).includes(q)))) return false;
+    if (c && (!r || r.category !== c)) return false;
+    if (loc && s.location_id !== loc) return false;
+    if (mb && s.user_id !== mb) return false;
+    if (qmin !== null || qmax !== null) {
+      if (s.quality_key === "-") return false;
+      const v = +s.quality_key;
+      if ((qmin !== null && v < qmin) || (qmax !== null && v > qmax)) return false;
+    }
+    return true;
+  });
+}
+function renderGlobal() {
+  const all = st.stocks.filter(s => num(s.quantity) > 0);
+  const totalBy = {}; for (const s of all) totalBy[s.resource_id] = num(totalBy[s.resource_id]) + num(s.quantity);
   $("#stCount").textContent = st.resources.length;
-  $("#stTotal").textContent = fmt(st.resources.reduce((s, r) => s + num(r.qty), 0));
-  const low = st.resources.filter(isLow).length;
+  $("#stTotal").textContent = fmt(all.reduce((t, s) => t + num(s.quantity), 0));
+  const low = st.resources.filter(r => r.threshold > 0 && num(totalBy[r.id]) < r.threshold).length;
   $("#stLow").textContent = low;
   $("#stLowBox").classList.toggle("alert", low > 0);
 
@@ -276,54 +359,210 @@ function renderStock() {
   const sel = $("#cat"), cur = sel.value;
   sel.innerHTML = '<option value="">Toutes catégories</option>' + cats.map(c => `<option${c === cur ? " selected" : ""}>${esc(c)}</option>`).join("");
   $("#catList").innerHTML = cats.map(c => `<option value="${esc(c)}">`).join("");
+  locationOptions($("#gLoc"), new Set(all.map(s => s.location_id)), "Tous les lieux");
+  memberOptions($("#gMember"), "Tous les membres");
 
-  $("#stockBody").innerHTML = rows.map(r => {
-    const l = viewLots(r), q = vp === "*" ? num(r.qty) : sumLots(l), low = isLow(r), aq = avgQ(l);
-    const pl = placesOf(r), pks = placeKeys(pl);
-    const where = vp === "*" && pks.length && !(pks.length === 1 && pks[0] === "")
-      ? `<div class="where">${pks.map(k => `<span title="${esc(lotsText(pl[k]))}">${esc(placeLabel(k))} <b>${fmt(sumLots(pl[k]))}</b></span>`).join("")}</div>` : "";
-    const qs = Object.keys(l).filter(k => k !== "-").map(Number);
-    const nl = Object.keys(l).length;
-    const qual = aq == null ? '<span class="muted">–</span>'
-      : `<div class="qual">Q moy. ${aq}<small>${qs.length > 1 ? Math.min(...qs) + " à " + Math.max(...qs) + " · " : ""}${nl} lot${nl > 1 ? "s" : ""}</small></div>`;
-    const pct = r.threshold > 0 ? Math.min(100, q / (r.threshold * 2) * 100) : 100;
-    const pill = r.threshold > 0 ? (low ? '<span class="pill low">Bas</span>' : '<span class="pill ok">OK</span>') : '<span class="pill none">Sans seuil</span>';
-    return `<tr class="${low ? "low" : ""}" data-id="${esc(r.id)}">
-      <td>${okImg(r.image) ? `<img class="rimg" src="${esc(r.image)}" alt="" title="${esc(r.color_name || r.name)}">` : swatch(r.color)}<span class="res-name">${esc(r.name)}</span>${r.category ? `<span class="chip">${esc(r.category)}</span>` : ""}${r.color_name ? `<div class="colordesc">${esc(r.color_name)}</div>` : ""}</td>
-      <td><div class="qty">${fmt(q)}<small>${esc(r.unit)}</small></div>${vp !== "*" ? `<div class="colordesc">sur ${fmt(r.qty)} au total</div>` : ""}${where}${r.threshold > 0 && vp === "*" ?`<div class="gauge" title="Seuil : ${fmt(r.threshold)}"><i style="width:${pct}%"></i></div>` : ""}</td>
-      <td>${qual}${lotChips(l)}</td>
-      <td>${pill}</td>
-      <td><div class="quick"><input type="number" class="qin" step="1" min="0" max="1000" placeholder="Q" id="qq-${esc(r.id)}" aria-label="Qualité (facultatif)"><input type="number" step="any" min="0" placeholder="qté" id="qk-${esc(r.id)}" aria-label="Quantité à ajouter ou retirer">
-        <button data-act="add" title="Ajouter">+</button><button data-act="remove" title="Retirer">−</button></div></td>
-      <td><button data-act="edit">Modifier</button></td></tr>`;
+  const byRes = new Map();
+  for (const s of stocksFiltered()) { if (!byRes.has(s.resource_id)) byRes.set(s.resource_id, []); byRes.get(s.resource_id).push(s); }
+  const list = [...byRes.entries()].map(([id, ss]) => ({ id, r: resOf(id), ss })).sort((a, b) => byName(a.r, b.r));
+  $("#stockEmpty").hidden = list.length > 0;
+  $("#stockBody").innerHTML = list.map(({ id, r, ss }) => {
+    const lots = {}; for (const s of ss) lots[s.quality_key] = num(lots[s.quality_key]) + num(s.quantity);
+    const aq = avgQ(lots), owners = new Set(ss.map(s => s.user_id)).size, places = new Set(ss.map(s => s.location_id)).size;
+    const isLowRes = r && r.threshold > 0 && num(totalBy[id]) < r.threshold, open = gOpen.has(id);
+    const detail = open ? `<tr class="detail"><td colspan="5"><table class="sub"><thead><tr><th>Membre</th><th>Lieu</th><th>Qualité</th><th>Quantité</th><th>Mis à jour</th></tr></thead><tbody>${
+      ss.slice().sort((a, b) => who(a.user_id).localeCompare(who(b.user_id)) || locName(a.location_id).localeCompare(locName(b.location_id)) || qVal(b.quality_key) - qVal(a.quality_key))
+        .map(s => `<tr><td>${esc(who(s.user_id))}</td><td>${esc(locName(s.location_id))}</td><td class="num">${qLabel(s.quality_key)}</td><td class="num">${fmt(s.quantity)}${esc(unitTxt(s.unit))}</td><td class="muted">${dateTxt(s.updated_at)}</td></tr>`).join("")
+    }</tbody></table></td></tr>` : "";
+    return `<tr class="${isLowRes ? "low" : ""}">
+      <td>${resCell(r)}${r && r.category ? `<span class="chip">${esc(r.category)}</span>` : ""}${isLowRes ? ' <span class="pill low">Sous le seuil</span>' : ""}</td>
+      <td><div class="qty">${esc(sumsText(unitSums(ss)))}</div></td>
+      <td>${aq == null ? '<span class="muted">–</span>' : `<div class="qual">Q moy. ${aq}</div>`}${lotChips(lots)}</td>
+      <td>${owners} membre${owners > 1 ? "s" : ""}<div class="colordesc">${places} lieu${places > 1 ? "x" : ""}</div></td>
+      <td><button type="button" data-open="${esc(id)}" aria-expanded="${open}">${open ? "Masquer" : "Détail"}</button></td></tr>${detail}`;
   }).join("");
-  if (st.resources.length && !rows.length) $("#stockBody").innerHTML = '<tr><td colspan="6" class="muted">Aucune ressource ne correspond au filtre.</td></tr>';
-  if (st.items.length) renderReview();
+}
+$("#stockBody").addEventListener("click", e => {
+  const b = e.target.closest("[data-open]"); if (!b) return;
+  const id = b.dataset.open; if (gOpen.has(id)) gOpen.delete(id); else gOpen.add(id);
+  renderGlobal();
+});
+["#q", "#gQmin", "#gQmax"].forEach(s => $(s).addEventListener("input", renderGlobal));
+["#cat", "#gLoc", "#gMember"].forEach(s => $(s).addEventListener("change", renderGlobal));
+$("#gExport").addEventListener("click", () => exportStocks(stocksFiltered(), false));
+
+function exportStocks(rows, withLegacy) {
+  const out = [["Membre", "Lieu", "Ressource", "Catégorie", "Qualité", "Quantité", "Unité", "Mis à jour"]];
+  const sorted = rows.slice().sort((a, b) => who(a.user_id).localeCompare(who(b.user_id)) || locName(a.location_id).localeCompare(locName(b.location_id)) || byName(resOf(a.resource_id), resOf(b.resource_id)));
+  for (const s of sorted) {
+    const r = resOf(s.resource_id);
+    out.push([who(s.user_id), locName(s.location_id), r ? r.name : "", r ? r.category : "", s.quality_key === "-" ? "" : s.quality_key,
+      frNum(s.quantity), s.unit, new Date(s.updated_at).toLocaleString("fr-FR")]);
+  }
+  if (withLegacy) for (const l of st.legacy.filter(x => x.status === "open"))
+    out.push(["(ancien stock non attribué)", l.place_name || "Non précisé", l.resource_name, "", l.quality_key === "-" ? "" : l.quality_key, frNum(l.quantity), "", ""]);
+  download(`stocks-${today()}.csv`, csv(out), "text/csv;charset=utf-8");
 }
 
-$("#stockBody").addEventListener("click", async e => {
-  const b = e.target.closest("button[data-act]"); if (!b) return;
-  const id = b.closest("tr").dataset.id, r = st.resources.find(x => x.id === id); if (!r) return;
-  if (b.dataset.act === "edit") return openDialog(r);
-  const inp = document.getElementById("qk-" + id), qin = document.getElementById("qq-" + id), amt = num(inp.value);
-  if (amt <= 0) { inp.focus(); return; }
-  // Lieu du mouvement : le lieu filtré, sinon le seul lieu de la ressource.
-  let place = viewPlace();
-  if (place === "*") {
-    const ks = Object.keys(placesOf(r));
-    if (ks.length > 1) { setStatus(`« ${r.name} » est stocké dans plusieurs lieux : choisis le lieu dans le filtre au-dessus du tableau, puis recommence.`); $("#placeF").focus(); return; }
-    place = ks[0] || $("#capPlace").value.trim();
-  }
-  b.disabled = true;
-  try { await applyLots(r, b.dataset.act, { [qKey(qin.value)]: amt }, "manuel", "", null, place); inp.value = ""; qin.value = ""; setStatus(""); }
-  catch (err) { setStatus(errText(err)); }
-  b.disabled = false;
+// ---------- mon inventaire (ou celui d'un autre membre, en lecture) ----------
+const mineOwner = () => $("#mOwner").value || (st.me && st.me.id);
+const canEditOwner = id => !!st.me && (id === st.me.id || isAdmin());
+function renderMine() {
+  memberOptions($("#mOwner"));
+  const owner = mineOwner(), self = !!st.me && owner === st.me.id;
+  $("#mineTitle").textContent = self ? "Mon inventaire" : "Inventaire de " + who(owner);
+  const mine = st.stocks.filter(s => s.user_id === owner);
+  const ids = new Set(mine.filter(s => num(s.quantity) > 0).map(s => s.location_id));
+  locationOptions($("#mLoc"), ids, self ? "Tous mes lieux" : "Tous ses lieux");
+  const loc = $("#mLoc").value;
+  const rows = mine.filter(s => num(s.quantity) > 0 && (!loc || s.location_id === loc)).sort((a, b) =>
+    locName(a.location_id).localeCompare(locName(b.location_id)) || byName(resOf(a.resource_id), resOf(b.resource_id)) || qVal(b.quality_key) - qVal(a.quality_key));
+  const canEdit = canEditOwner(owner);
+  $("#mineEmpty").hidden = rows.length > 0;
+  $("#mineBody").innerHTML = rows.map(s => `<tr>
+    <td>${resCell(resOf(s.resource_id))}</td><td>${esc(locName(s.location_id))}</td><td class="num">${qLabel(s.quality_key)}</td>
+    <td class="num"><strong>${fmt(s.quantity)}</strong>${esc(unitTxt(s.unit))}</td><td class="muted">${dateTxt(s.updated_at)}</td>
+    <td>${canEdit ? `<button type="button" data-use="${s.id}">Mouvement</button>` : ""}</td></tr>`).join("");
+  // Date du dernier relevé fiable, par lieu.
+  const last = new Map();
+  for (const sc of st.scansMeta) if (sc.user_id === owner && !last.has(sc.location_id)) last.set(sc.location_id, sc);
+  const shown = [...ids].filter(id => !loc || id === loc).sort((a, b) => locName(a).localeCompare(locName(b)));
+  $("#mineScans").hidden = !shown.length;
+  $("#mineScans").innerHTML = shown.map(id => {
+    const sc = last.get(id);
+    return `<span class="chip">${esc(locName(id))} · ${sc ? `dernier relevé ${dateTxt(sc.observed_at)}${sc.coverage_status === "complete" ? " (complet)" : ""}` : "aucun relevé par capture"}</span>`;
+  }).join("");
+  $("#moveForm").hidden = !canEdit;
+  const rs = $("#mvRes"), cur = rs.value;
+  rs.innerHTML = st.resources.slice().sort(byName).map(r => `<option value="${esc(r.id)}">${esc(r.name)}</option>`).join("");
+  if (cur && st.resources.some(r => r.id === cur)) rs.value = cur;
+  if (!$("#mvPlace").value) $("#mvPlace").value = loc ? locName(loc) : $("#capPlace").value;
+}
+$("#mOwner").addEventListener("change", () => { renderMine(); loadMyMoves(); });
+$("#mLoc").addEventListener("change", () => { $("#mvPlace").value = $("#mLoc").value ? locName($("#mLoc").value) : $("#mvPlace").value; renderMine(); });
+$("#mvKind").innerHTML = `<optgroup label="Entrée">${INC_KINDS.map(k => `<option value="${k}">${KIND[k]}</option>`).join("")}</optgroup>`
+  + `<optgroup label="Sortie">${DEC_KINDS.map(k => `<option value="${k}">${KIND[k]}</option>`).join("")}</optgroup>`
+  + `<optgroup label="Correction"><option value="correction">Corriger la quantité (valeur exacte)</option></optgroup>`;
+$("#mineBody").addEventListener("click", e => {
+  const b = e.target.closest("[data-use]"); if (!b) return;
+  const s = st.stocks.find(x => String(x.id) === b.dataset.use); if (!s) return;
+  $("#mvRes").value = s.resource_id; $("#mvPlace").value = locName(s.location_id);
+  $("#mvQ").value = s.quality_key === "-" ? "" : s.quality_key; $("#mvUnit").value = s.unit;
+  $("#moveForm").scrollIntoView({ block: "nearest" }); $("#mvQty").focus();
 });
-$("#q").addEventListener("input", renderStock);
-$("#cat").addEventListener("change", renderStock);
-$("#placeF").addEventListener("change", renderStock);
+$("#moveForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  const kind = $("#mvKind").value, mode = kind === "correction" ? "set" : INC_KINDS.includes(kind) ? "add" : "remove";
+  const owner = mineOwner(), m = $("#mvMsg");
+  const p = { owner_id: owner === st.me.id ? null : owner, location: $("#mvPlace").value.trim(), resource_id: $("#mvRes").value,
+    quality_key: $("#mvQ").value, unit: $("#mvUnit").value.trim(), mode, quantity: num($("#mvQty").value),
+    kind: mode === "set" ? null : kind, note: $("#mvNote").value.trim() };
+  $("#mvGo").disabled = true;
+  try {
+    const r = await rpc("adjust_stock", { p });
+    m.textContent = r ? `Mouvement enregistré (${KIND[r.kind] || r.kind}) : ${fmt(r.before)} → ${fmt(r.after)}.` : "Aucun changement : la quantité est déjà celle-ci.";
+    m.className = "formmsg ok"; $("#mvQty").value = ""; $("#mvNote").value = "";
+    await loadStocks(); loadMyMoves();
+  } catch (err) { m.textContent = errText(err); m.className = "formmsg err"; }
+  $("#mvGo").disabled = false;
+});
 
-// ---------- fiche ressource ----------
+// Mouvements du membre affiché ; une hausse ou une baisse d'origine inconnue peut être classée après coup.
+let movesReq = 0;
+async function loadMyMoves() {
+  const owner = mineOwner(); if (!owner || !st.v2) return;
+  const req = ++movesReq;
+  const { data, error } = await sb.from("movements").select("*").eq("owner_id", owner).order("at", { ascending: false }).limit(50);
+  if (error || req !== movesReq) return;
+  st.myMoves = data || []; renderMyMoves();
+}
+function renderMyMoves() {
+  const canEdit = canEditOwner(mineOwner());
+  $("#myMovesEmpty").hidden = st.myMoves.length > 0;
+  $("#myMoves").innerHTML = st.myMoves.map(m => {
+    const d = num(m.delta), open = m.kind === "increase" || m.kind === "decrease";
+    const opts = (d > 0 ? INC_KINDS : DEC_KINDS).map(k => `<option value="${k}">${KIND[k]}</option>`).join("");
+    return `<li><div><span class="d ${d > 0 ? "up" : d < 0 ? "down" : ""}">${d > 0 ? "+" : ""}${fmt(d)}${esc(unitTxt(m.unit))}</span> · <strong>${esc(m.name)}</strong> <span class="muted">${qLabel(m.quality_key)}</span></div>
+      <div class="meta">${esc(locName(m.location_id))} · <span class="tag${open ? " warn" : ""}">${esc(KIND[m.kind] || m.kind || "")}</span>${m.note ? " · " + esc(m.note) : ""}</div>
+      ${open && canEdit ? `<div class="meta"><select data-classify="${m.id}" aria-label="Préciser la nature du mouvement"><option value="">Préciser la nature…</option>${opts}</select></div>` : ""}
+      <div class="meta">${fmt(m.before)} → ${fmt(m.after)} · ${m.by && m.by !== m.owner_id ? "par " + esc(who(m.by)) + " · " : ""}${ago(m.at)}</div></li>`;
+  }).join("");
+}
+$("#myMoves").addEventListener("change", async e => {
+  const s = e.target.closest("[data-classify]"); if (!s || !s.value) return;
+  s.disabled = true;
+  try { await rpc("classify_movement", { p_id: Number(s.dataset.classify), p_kind: s.value }); setStatus(""); await loadMyMoves(); }
+  catch (err) { setStatus(errText(err)); s.disabled = false; }
+});
+
+// ---------- anciens stocks non attribués (rapprochement par un administrateur) ----------
+function renderLegacy() {
+  const open = st.legacy.filter(l => l.status === "open").sort((a, b) => a.resource_name.localeCompare(b.resource_name) || a.place_name.localeCompare(b.place_name));
+  $("#legacyPanel").hidden = !open.length;
+  $("#legacyTotal").textContent = open.length ? `${open.length} ligne${open.length > 1 ? "s" : ""} · ${fmt(open.reduce((t, l) => t + num(l.quantity), 0))} unités` : "";
+  const members = Object.values(st.profiles).filter(p => p.role !== "pending").sort((a, b) => a.pseudo.localeCompare(b.pseudo))
+    .map(p => `<option value="${esc(p.id)}">${esc(p.pseudo)}</option>`).join("");
+  $("#legacyBody").innerHTML = open.map(l => `<tr data-lid="${l.id}">
+    <td>${resCell(resOf(l.resource_id), l.resource_name)}</td><td>${l.place_name ? esc(l.place_name) : '<span class="muted">Non précisé</span>'}</td>
+    <td class="num">${qLabel(l.quality_key)}</td><td class="num">${fmt(l.quantity)}</td>
+    <td>${isAdmin() ? `<div class="acts legacy-acts"><select id="lg-who-${l.id}" aria-label="Membre"><option value="">Attribuer à…</option>${members}</select>${l.location_id ? "" : `<input type="text" id="lg-loc-${l.id}" list="placeList" placeholder="Lieu" aria-label="Lieu">`}<button type="button" data-legacy="attribute">Attribuer</button><button type="button" data-legacy="archive" title="Déjà compté dans un inventaire personnel, ou obsolète">Archiver</button></div>` : ""}</td></tr>`).join("");
+}
+$("#legacyBody").addEventListener("click", async e => {
+  const b = e.target.closest("[data-legacy]"); if (!b) return;
+  const id = Number(b.closest("tr").dataset.lid), action = b.dataset.legacy;
+  const owner = action === "attribute" ? $(`#lg-who-${id}`).value : null;
+  if (action === "attribute" && !owner) return setStatus("Choisis le membre à qui attribuer ce stock.");
+  if (!b.classList.contains("armed")) { b.classList.add("armed"); b.textContent = "Confirmer"; return; }
+  b.disabled = true;
+  try {
+    await rpc("resolve_legacy", { p_id: id, p_action: action, p_owner: owner || null, p_location: ($(`#lg-loc-${id}`) || {}).value || null, p_note: "" });
+    setStatus(""); await loadStocks();
+  } catch (err) { setStatus(errText(err)); b.disabled = false; b.classList.remove("armed"); b.textContent = action === "attribute" ? "Attribuer" : "Archiver"; }
+});
+
+// ---------- contributions ----------
+const CAT = {
+  production: ["production"], other_in: ["deposit", "transfer_in", "purchase", "legacy_attribution"], unknown_in: ["increase"],
+  out: ["withdrawal", "sale", "transfer_out", "refining", "consumption", "loss"], unknown_out: ["decrease"],
+  initial: ["initial"], correction: ["correction"],
+};
+async function loadStats() {
+  if (!st.v2) return;
+  const from = $("#sFrom").value, to = $("#sTo").value, mb = $("#sMember").value, out = [];
+  for (let p = 0; p < 20; p++) {
+    let q = sb.from("movements").select("owner_id, location_id, name, unit, quality_key, delta, kind, at")
+      .not("owner_id", "is", null).order("at", { ascending: false }).range(p * 1000, p * 1000 + 999);
+    if (from) q = q.gte("at", new Date(from + "T00:00:00").toISOString());
+    if (to) q = q.lte("at", new Date(to + "T23:59:59").toISOString());
+    if (mb) q = q.eq("owner_id", mb);
+    const { data, error } = await q;
+    if (error) return setStatus(errText(error));
+    out.push(...data); if (data.length < 1000) break;
+  }
+  renderStats(out);
+}
+function renderStats(ms) {
+  const by = new Map();
+  for (const m of ms) {
+    const cat = Object.keys(CAT).find(c => CAT[c].includes(m.kind)); if (!cat) continue;
+    if (!by.has(m.owner_id)) by.set(m.owner_id, {});
+    const row = by.get(m.owner_id);
+    (row[cat] = row[cat] || []).push({ unit: m.unit, v: cat === "out" || cat === "unknown_out" ? -num(m.delta) : num(m.delta) });
+  }
+  const cell = list => list ? esc(sumsText(unitSums(list, "v"))) : '<span class="muted">–</span>';
+  $("#statsBody").innerHTML = [...by.entries()].sort((a, b) => who(a[0]).localeCompare(who(b[0]))).map(([o, r]) =>
+    `<tr><td><strong>${esc(who(o))}</strong></td><td>${cell(r.production)}</td><td>${cell(r.other_in)}</td><td>${cell(r.unknown_in)}</td><td>${cell(r.out)}</td><td>${cell(r.unknown_out)}</td><td class="muted">${cell(r.initial)}</td><td>${cell(r.correction)}</td></tr>`
+  ).join("") || '<tr><td colspan="8" class="muted">Aucun mouvement sur cette période.</td></tr>';
+  const ins = ms.filter(m => num(m.delta) > 0 && m.kind !== "initial" && m.kind !== "correction");
+  $("#contribCount").textContent = `${ins.length} apport${ins.length > 1 ? "s" : ""}${ins.length > 500 ? " (500 premiers affichés)" : ""}`;
+  $("#contribBody").innerHTML = ins.slice(0, 500).map(m => `<tr><td class="num">${dateTxt(m.at)}</td><td>${esc(who(m.owner_id))}</td><td>${esc(m.name)}</td><td>${esc(locName(m.location_id))}</td><td class="num">${qLabel(m.quality_key)}</td><td class="num up">+${fmt(m.delta)}${esc(unitTxt(m.unit))}</td><td><span class="tag${m.kind === "increase" ? " warn" : ""}">${esc(KIND[m.kind] || m.kind)}</span></td></tr>`).join("")
+    || '<tr><td colspan="7" class="muted">Aucun apport sur cette période.</td></tr>';
+}
+$("#sGo").addEventListener("click", loadStats);
+$("#sTo").value = new Date().toISOString().slice(0, 10);
+$("#sFrom").value = new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10);
+
+// ---------- fiche ressource (catalogue : les quantités sont dans les inventaires des membres) ----------
 const dlg = $("#dlg");
 let editing = null;
 function openDialog(r) {
@@ -332,7 +571,6 @@ function openDialog(r) {
   $("#fName").value = r ? r.name : "";
   $("#fCat").value = r ? r.category || "" : "";
   $("#fUnit").value = r ? r.unit || "" : "";
-  $("#fLots").value = r ? placesToText(placesOf(r)) : ($("#capPlace").value.trim() ? `[${$("#capPlace").value.trim()}]\n` : "");
   $("#fMin").value = r && r.threshold ? r.threshold : "";
   $("#fColor").value = (r && okHex(r.color)) || "#888888";
   $("#fColor").dataset.touched = r && okHex(r.color) ? "1" : "";
@@ -352,8 +590,7 @@ $("#fDelete").addEventListener("click", async e => {
 $("#resForm").addEventListener("submit", async e => {
   e.preventDefault();
   const v = {
-    name: $("#fName").value.trim(), category: $("#fCat").value.trim(), unit: $("#fUnit").value.trim(),
-    places: parsePlaces($("#fLots").value), threshold: num($("#fMin").value),
+    name: $("#fName").value.trim(), category: $("#fCat").value.trim(), unit: $("#fUnit").value.trim(), threshold: num($("#fMin").value),
     color: $("#fColor").dataset.touched ? $("#fColor").value : "", color_name: $("#fColorName").value.trim(),
   };
   if (!v.name) return;
@@ -361,7 +598,8 @@ $("#resForm").addEventListener("submit", async e => {
   if (!r && st.resources.some(x => norm(x.name) === norm(v.name))) { $("#fName").setCustomValidity("Cette ressource existe déjà."); $("#fName").reportValidity(); $("#fName").setCustomValidity(""); return; }
   $("#fSave").disabled = true;
   try {
-    if (r) await applyLots(r, "places", v.places, "correction", "", { name: v.name, category: v.category, unit: v.unit, threshold: v.threshold, color: okHex(v.color), color_name: v.color_name });
+    // Mise à jour du catalogue seulement : un écart vide ne crée aucun mouvement de stock.
+    if (r) await applyLots(r, "add", {}, "correction", "", { name: v.name, category: v.category, unit: v.unit, threshold: v.threshold, color: okHex(v.color), color_name: v.color_name });
     else await createResource(v, "manuel", "");
     dlg.close();
   } catch (err) { dlg.close(); setStatus(errText(err)); }
@@ -376,17 +614,19 @@ function ago(iso) {
   if (s < 86400) return "il y a " + Math.floor(s / 3600) + " h";
   return new Date(iso).toLocaleDateString("fr-FR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 }
-const modeLabel = { add: "Entrée", remove: "Sortie", set: "Inventaire", create: "Création", delete: "Suppression", merge: "Fusion", undo: "Annulation" };
+const modeLabel = { add: "Entrée", remove: "Sortie", set: "Inventaire", create: "Création", delete: "Suppression", merge: "Fusion", undo: "Annulation",
+  scan: "Capture", stock: "Mouvement", correction: "Correction", legacy: "Attribution" };
 function renderLog() {
   $("#logEmpty").hidden = st.moves.length > 0;
   $("#log").innerHTML = st.moves.map(m => {
-    const d = num(m.after) - num(m.before);
-    const cls = d > 0 ? "up" : d < 0 ? "down" : "";
-    const who = (st.profiles[m.by] && st.profiles[m.by].pseudo) || "Un membre";
-    return `<li><div><span class="d ${cls}">${d > 0 ? "+" : ""}${fmt(d)} ${esc(m.unit)}</span> · <strong>${esc(m.name)}</strong></div>
-      <div class="meta"><span class="num">${fmt(m.before)} → ${fmt(m.after)}</span> · ${modeLabel[m.mode] || esc(m.mode)}${m.source === "capture" ? " par capture" : ""}${m.place ? " · " + esc(m.place) : ""}${m.note ? " · " + esc(m.note) : ""}</div>
-      ${m.detail ? `<div class="meta num">${esc(m.detail)}</div>` : ""}
-      <div class="meta">${esc(who)} · ${ago(m.at)}</div></li>`;
+    const d = m.delta != null ? num(m.delta) : num(m.after) - num(m.before);
+    const by = (st.profiles[m.by] && st.profiles[m.by].pseudo) || "Un membre";
+    const whose = m.owner_id ? `${esc(who(m.owner_id))} · ${esc(locName(m.location_id))} · ${qLabel(m.quality_key)}` : "Ancien registre (non attribué)";
+    const label = m.kind ? KIND[m.kind] || m.kind : modeLabel[m.mode] || m.mode;
+    return `<li><div><span class="d ${d > 0 ? "up" : d < 0 ? "down" : ""}">${d > 0 ? "+" : ""}${fmt(d)}${esc(unitTxt(m.unit))}</span> · <strong>${esc(m.name)}</strong></div>
+      <div class="meta">${whose}</div>
+      <div class="meta"><span class="num">${fmt(m.before)} → ${fmt(m.after)}</span> · ${esc(label)}${m.source === "capture" ? " par capture" : ""}${m.note ? " · " + esc(m.note) : ""}</div>
+      <div class="meta">${m.owner_id && m.by !== m.owner_id ? "par " : ""}${esc(by)} · ${ago(m.at)}</div></li>`;
   }).join("");
 }
 
@@ -426,7 +666,13 @@ function addImages(files) {
   const imgs = [...(files || [])].filter(f => f && f.type && f.type.startsWith("image/"));
   if (!imgs.length) return;
   const room = MAX_SHOTS - st.shots.length;
-  for (const f of imgs.slice(0, Math.max(0, room))) st.shots.push({ id: ++shotSeq, file: f, url: URL.createObjectURL(f), status: "new", n: 0, err: "" });
+  for (const f of imgs.slice(0, Math.max(0, room))) {
+    // Date de la capture : celle du fichier (capture enregistrée) ou du collage.
+    const shot = { id: ++shotSeq, file: f, url: URL.createObjectURL(f), status: "new", n: 0, err: "", observedAt: f.lastModified || Date.now() };
+    st.shots.push(shot);
+    fingerprint(f).then(h => { shot.fp = h; }).catch(() => {});
+  }
+  hideDiff();
   renderShots();
   const p = pendingShots().length;
   if (imgs.length > room) capMsg(`${MAX_SHOTS} captures au maximum à la fois : enregistre celles-ci, puis continue.`, true);
@@ -470,14 +716,20 @@ drop.addEventListener("dragover", e => { e.preventDefault(); drop.classList.add(
 drop.addEventListener("dragleave", () => drop.classList.remove("over"));
 drop.addEventListener("drop", e => { e.preventDefault(); drop.classList.remove("over"); addImages(e.dataTransfer.files); });
 document.addEventListener("paste", e => {
-  if ($("#appView").hidden || $("#stocksView").hidden) return;
+  if ($("#appView").hidden || $("#mineView").hidden) return;
   const fs = [...(e.clipboardData?.files || [])].filter(f => f.type.startsWith("image/"));
   if (fs.length) { e.preventDefault(); addImages(fs); drop.scrollIntoView({ block: "nearest" }); }
 });
 $("#clearCap").addEventListener("click", e => { e.stopPropagation(); clearCapture(); });
+// Empreinte SHA-256 de l'image : signale une capture déjà enregistrée, sans jamais bloquer un nouveau relevé.
+async function fingerprint(file) {
+  const h = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+  return [...new Uint8Array(h)].map(b => b.toString(16).padStart(2, "0")).join("");
+}
 function clearCapture() {
   for (const s of st.shots) URL.revokeObjectURL(s.url);
-  st.shots = []; st.items = [];
+  st.shots = []; st.items = []; st.reasons = {}; st.scanKey = null;
+  hideDiff();
   $("#review").hidden = true; $("#file").value = ""; capMsg("");
   renderShots();
 }
@@ -487,8 +739,15 @@ $("#capPlace").addEventListener("change", e => {
   try { localStorage.setItem("registre.place", e.target.value.trim()); } catch (_) {}
   if (st.items.length) renderReview();
 });
-const capMode = () => document.querySelector("input[name=capMode]:checked").value;
-document.querySelectorAll("input[name=capMode]").forEach(r => r.addEventListener("change", () => st.items.length && renderReview()));
+// Couverture : une capture partielle ne touche qu'aux minerais visibles ; un inventaire complet met les absents à 0.
+const capCoverage = () => document.querySelector("input[name=capCov]:checked").value;
+document.querySelectorAll("input[name=capCov]").forEach(r => r.addEventListener("change", () => {
+  $("#capCovHint").textContent = capCoverage() === "complete"
+    ? "Les minerais absents des captures passeront à 0 dans ce lieu. L'aperçu te les montrera avant d'enregistrer."
+    : "Seuls les minerais visibles sont mis à jour ; les autres ne changent pas.";
+  hideDiff();
+}));
+["#capOwner", "#capTerminal", "#capPlace"].forEach(sel => $(sel).addEventListener("change", hideDiff));
 
 // Réduit l'image (2000 px max) pour limiter le coût d'analyse et le temps d'envoi.
 async function toBase64Jpeg(file) {
@@ -508,12 +767,15 @@ async function analyzeShot(s) {
     try { msg = (await error.context.json()).error || msg; } catch (_) {}
     throw new Error(msg);
   }
+  s.terminal = String(data?.terminal_type || "inconnu");
   const raw = (Array.isArray(data?.items) ? data.items : []).filter(i => i && i.name);
   const crops = await cropTiles(s.file, raw.map(i => i.box));
   return raw.map((i, k) => ({
     name: String(i.name).trim(), quality: qKey(i.quality) === "-" ? "" : qKey(i.quality), qty: i.qty == null ? 1 : num(i.qty),
     unit: String(i.unit || "").trim(), color: String(i.color || "").trim(), hex: okHex(String(i.hex || "").trim()), by: String(i.by || ""),
     on: true, target: matchTarget(String(i.name)), shot: s.id, crop: crops[k],
+    box: Array.isArray(i.box) && i.box.length === 4 ? i.box.map(num) : null,
+    confidence: i.confidence == null ? null : Math.max(0, Math.min(1, num(i.confidence))),
     // Lots lus comme le même caillou (même nom ou même couleur) : renommer l'un renomme les autres, sur toutes les pages.
     group: norm(i.name),
   }));
@@ -563,7 +825,7 @@ $("#analyze").addEventListener("click", async () => {
       left--;
       if (left) capMsg(`Lecture en cours… encore ${left} capture${left > 1 ? "s" : ""}.`);
       renderShots();
-      if (st.items.length) { st.items.sort((a, b) => shotPage(a.shot) - shotPage(b.shot)); renderReview(); }
+      if (st.items.length) { st.items.sort((a, b) => shotPage(a.shot) - shotPage(b.shot)); markOverlaps(); renderReview(); }
     }
   };
   await Promise.all([worker(), worker(), worker()]);
@@ -587,25 +849,16 @@ function matchTarget(name) {
   return r ? r.id : "new";
 }
 
-// Regroupe les lignes cochées par ressource cible : un lot par qualité.
-function groupItems() {
-  const g = new Map();
-  for (const it of st.items) {
-    if (!it.on || !it.name) continue;
-    const r = st.resources.find(x => x.id === it.target) || st.resources.find(x => norm(x.name) === norm(it.name));
-    const key = r ? r.id : "new:" + norm(it.name);
-    if (!g.has(key)) g.set(key, { r, it, lots: {} });
-    const e = g.get(key), k = qKey(it.quality);
-    e.lots[k] = num(e.lots[k]) + num(it.qty);
-    if (!e.crop && it.crop) e.crop = it.crop;
-  }
-  return g;
+// Cases probablement répétées entre deux pages qui se chevauchent : décochées, avec un avertissement.
+function markOverlaps() {
+  const entries = st.items.map(it => ({ page: shotPage(it.shot), name: it.name, quality: it.quality, qty: it.qty, unit: it.unit, box: it.box, it }));
+  for (const it of st.items) if (it.dup) { it.dup = false; }
+  for (const e of ScanLogic.flagOverlaps(entries)) { e.it.dup = true; e.it.on = false; }
 }
+
 function renderReview() {
   $("#review").hidden = false;
-  const mode = capMode();
-  const opts = st.resources.slice().sort((a, b) => a.name.localeCompare(b.name));
-  const groups = groupItems();
+  const opts = st.resources.slice().sort(byName);
   const sizes = {};
   for (const it of st.items) sizes[it.group] = (sizes[it.group] || 0) + 1;
   $("#reviewBody").innerHTML = st.items.map((it, i) => {
@@ -620,25 +873,22 @@ function renderReview() {
       ? `<br><button type="button" class="linkbtn" data-ref="${i}" data-how="add" title="Cette case montre bien ${esc(r.name)} : elle servira de modèle, en plus des autres vues (utile quand le caillou s'affiche autrement, par exemple dans un ascenseur de fret)">${views.length ? "Ajouter comme vue de référence" : "Définir l'image de référence"}</button>`
         + (views.length ? ` · <button type="button" class="linkbtn" data-ref="${i}" data-how="main" title="Remplace l'image principale, affichée dans le stock">Image principale</button>` : "") : "";
     const pic = it.crop ? `<span class="pics"><img class="crop" src="${it.crop}" alt="Case lue sur la capture">${ref}</span>` : swatch(it.hex, it.color);
-    const g = groups.get(r ? r.id : "new:" + norm(it.name));
-    const before = r ? num(r.qty) : 0;
-    // Seul le stock du lieu choisi change ; le résultat affiché est le total de la ressource.
-    const here = r ? (placesOf(r)[$("#capPlace").value.trim()] || {}) : {};
-    const after = !it.on || !g ? before : r ? before - sumLots(here) + sumLots(mergeLots(here, g.lots, mode)) : (mode === "remove" ? 0 : sumLots(g.lots));
-    const unit = r ? r.unit : it.unit;
-    return `<tr data-i="${i}">
+    const warn = [];
+    if (it.dup) warn.push('<span class="tag warn" title="La même suite de cases termine la page précédente : cette case est sans doute déjà comptée">Déjà vue page précédente ?</span>');
+    if (it.confidence != null && it.confidence < 0.7) warn.push('<span class="tag warn" title="L\'IA n\'est pas sûre de cette lecture">Lecture incertaine</span>');
+    return `<tr data-i="${i}" class="${it.on ? "" : "off"}">
       <td><input type="checkbox" data-f="on" id="rv-on-${i}" ${it.on ? "checked" : ""} aria-label="Inclure cette ligne"></td>
       <td class="pg">p. ${shotPage(it.shot) || "–"}</td>
-      <td><input type="text" data-f="name" id="rv-name-${i}" value="${esc(it.name)}"></td>
+      <td><input type="text" data-f="name" id="rv-name-${i}" value="${esc(it.name)}">${warn.length ? `<div class="warns">${warn.join(" ")}</div>` : ""}</td>
       <td><div style="display:flex;align-items:center;min-width:130px">${pic}<span class="colordesc">${esc(it.color || "–")}${it.by === "couleur" ? "<br>reconnu par l'apparence" : ""}${linked}${setRef}</span></div></td>
       <td><input type="number" class="qin" step="1" min="0" max="1000" placeholder="?" data-f="quality" id="rv-q-${i}" value="${esc(it.quality)}" aria-label="Qualité"></td>
-      <td><input type="number" step="any" min="0" data-f="qty" id="rv-qty-${i}" value="${it.qty}"></td>
-      <td><select data-f="target" id="rv-target-${i}"><option value="new"${it.target === "new" ? " selected" : ""}>Nouvelle ressource</option>${opts.map(o => `<option value="${esc(o.id)}"${o.id === it.target ? " selected" : ""}>${esc(o.name)}</option>`).join("")}</select></td>
-      <td class="arrow" title="Total de la ressource">${r ? fmt(before) + " → " : "nouveau : "}<strong>${fmt(after)}</strong> ${esc(unit)}</td></tr>`;
+      <td><input type="number" step="any" min="0" data-f="qty" id="rv-qty-${i}" value="${it.qty}" aria-label="Quantité"></td>
+      <td><input type="text" class="uin" data-f="unit" id="rv-unit-${i}" list="unitList" maxlength="20" placeholder="objets" value="${esc(it.unit)}" aria-label="Unité"></td>
+      <td><select data-f="target" id="rv-target-${i}"><option value="new"${it.target === "new" ? " selected" : ""}>Nouvelle ressource (ajoutée au catalogue)</option>${opts.map(o => `<option value="${esc(o.id)}"${o.id === it.target ? " selected" : ""}>${esc(o.name)}</option>`).join("")}</select></td></tr>`;
   }).join("");
   const n = st.items.filter(i => i.on).length;
-  $("#commit").textContent = n ? `Enregistrer ${n} lot${n > 1 ? "s" : ""} (${groups.size} ressource${groups.size > 1 ? "s" : ""})` : "Aucune ligne cochée";
-  $("#commit").disabled = !n;
+  $("#compare").textContent = n ? `Comparer ${n} lot${n > 1 ? "s" : ""} avec le stock enregistré` : "Aucune ligne cochée";
+  $("#compare").disabled = !n;
 }
 // « Séparer » : ce lot quitte son groupe de couleur et prend un nom à lui.
 let splitSeq = 0;
@@ -660,7 +910,7 @@ $("#reviewBody").addEventListener("click", async e => {
         await rpc("add_resource_ref", { p_id: r.id, p_image: it.crop });
         if (!okImg(r.image)) r.image = it.crop; else r.refs = [...(r.refs || []), it.crop].slice(-6);
       }
-      renderReview(); renderStock(); setStatus("");
+      renderReview(); renderAllStocks(); setStatus("");
     }
     catch (err) { setStatus(errText(err)); rb.disabled = false; }
     return;
@@ -672,19 +922,21 @@ $("#reviewBody").addEventListener("click", async e => {
   let moved = same.filter(x => norm(x.color) === norm(it.color));
   if (moved.length === same.length) moved = [it];
   const g = "split:" + (++splitSeq), name = `${it.name} (autre)`;
-  for (const x of moved) { x.group = g; x.name = name; x.target = "new"; }
-  renderReview();
+  for (const x of moved) { x.group = g; x.name = name; x.target = "new"; x.edited = true; }
+  hideDiff(); renderReview();
   const inp = $(`#rv-name-${b.dataset.split}`); if (inp) { inp.focus(); inp.select(); }
 });
 $("#reviewBody").addEventListener("change", e => {
   const f = e.target.dataset.f; if (!f) return;
   const it = st.items[+e.target.closest("tr").dataset.i];
   if (f === "on") it.on = e.target.checked;
-  else if (f === "qty") it.qty = num(e.target.value);
-  else if (f === "quality") it.quality = qKey(e.target.value) === "-" ? "" : qKey(e.target.value);
+  else if (f === "qty") { it.qty = num(e.target.value); it.edited = true; }
+  else if (f === "quality") { it.quality = qKey(e.target.value) === "-" ? "" : qKey(e.target.value); it.edited = true; }
+  else if (f === "unit") { it.unit = e.target.value.trim(); it.edited = true; }
   else if (f === "name" || f === "target") {
     const v = f === "name" ? e.target.value.trim() : e.target.value;
     for (const x of st.items.filter(x => x.group === it.group)) {
+      x.edited = true;
       if (f === "name") {
         x.name = v;
         const t = matchTarget(v);
@@ -696,39 +948,128 @@ $("#reviewBody").addEventListener("change", e => {
       }
     }
   }
-  renderReview();
+  hideDiff(); renderReview();
 });
 
-$("#commit").addEventListener("click", async () => {
-  const mode = capMode(), note = $("#capNote").value.trim(), place = $("#capPlace").value.trim();
-  const todo = [...groupItems().values()];
-  $("#commit").disabled = true;
-  let done = 0;
+// ---------- comparaison avec le dernier relevé, puis enregistrement transactionnel ----------
+function hideDiff() { $("#diff").hidden = true; st.diff = null; $("#forceStale").hidden = true; $("#commit").hidden = false; }
+const scanOwner = () => isAdmin() && $("#capOwner").value && $("#capOwner").value !== st.me.id ? $("#capOwner").value : null;
+function detectedTerminal() {
+  const votes = {};
+  for (const s of st.shots) if (s.terminal && s.terminal !== "inconnu") votes[s.terminal] = (votes[s.terminal] || 0) + 1;
+  return (Object.entries(votes).sort((a, b) => b[1] - a[1])[0] || ["inconnu"])[0];
+}
+function scanPayload(extra = {}) {
+  const times = st.shots.map(s => s.observedAt).filter(Boolean);
+  const items = st.items.filter(it => it.target && it.target !== "new").map(it => {
+    const doubt = it.edited || (it.confidence != null && it.confidence < 0.7);
+    return { resource_id: it.target, quality_key: it.quality, quantity: num(it.qty), unit: (it.unit || "").trim(),
+      confidence: it.confidence, validation_status: !it.on ? "rejected" : it.edited ? "corrected" : "accepted",
+      ...(doubt && it.crop ? { image_reference: it.crop } : {}) };
+  });
+  return {
+    location: $("#capPlace").value.trim(), owner_id: scanOwner(), terminal_type: $("#capTerminal").value || detectedTerminal(),
+    coverage: capCoverage(), observed_at: new Date(times.length ? Math.min(...times) : Date.now()).toISOString(),
+    fingerprints: st.shots.map(s => s.fp).filter(Boolean), page_count: st.shots.length, note: $("#capNote").value.trim(),
+    items, ...extra,
+  };
+}
+function setMsg(sel, t, err) { const el = $(sel); el.textContent = t; el.className = err ? "err" : "muted"; }
+async function preview() {
+  st.scanKey = crypto.randomUUID();
+  st.diff = await rpc("apply_scan", { p: scanPayload(), p_dry_run: true });
+  renderDiff();
+}
+$("#compare").addEventListener("click", async () => {
+  if (!$("#capPlace").value.trim()) { $("#capPlace").focus(); return setMsg("#compareMsg", "Choisis le lieu de stockage avant de comparer.", true); }
+  if (capCoverage() === "complete" && st.shots.some(s => s.status !== "done"))
+    return setMsg("#compareMsg", "Pour un inventaire complet, toutes les pages doivent être analysées sans erreur.", true);
+  if (st.items.some(it => it.on && !it.name.trim())) return setMsg("#compareMsg", "Chaque ligne cochée doit avoir un nom.", true);
+  $("#compare").disabled = true; setMsg("#compareMsg", "Comparaison avec le dernier relevé…");
   try {
-    for (const { r, it, lots, crop } of todo) {
-      let id = r && r.id;
-      if (r) await applyLots(r, mode, lots, "capture", note, null, place);
-      else id = await createResource({ name: it.name, unit: it.unit, lots: mode === "remove" ? {} : lots, place, color: it.hex, color_name: it.color }, "capture", note);
-      // Première image du caillou pour cette ressource (une image existante n'est pas remplacée).
-      if (id && crop && !(r && okImg(r.image))) await rpc("set_resource_image", { p_id: id, p_image: crop }).catch(err => console.warn(err));
-      done++; $("#commitMsg").textContent = `${done} / ${todo.length}`;
+    // Les nouvelles ressources rejoignent d'abord le catalogue (sans aucun stock).
+    const fresh = new Map();
+    for (const it of st.items) if (it.on && it.target === "new") { const k = norm(it.name); if (!fresh.has(k)) fresh.set(k, it); }
+    for (const [k, it] of fresh) {
+      const known = st.resources.find(r => norm(r.name) === k);
+      const id = known ? known.id : await createResource({ name: it.name, unit: "", color: it.hex, color_name: it.color }, "capture", "");
+      for (const x of st.items) if (x.target === "new" && norm(x.name) === k) x.target = id;
     }
-    $("#commitMsg").textContent = "";
-    clearCapture(); $("#capNote").value = "";
-    capMsg(`${done} ressource${done > 1 ? "s mises" : " mise"} à jour dans le registre (${placeLabel(place)}).`);
-  } catch (err) {
-    setStatus(errText(err));
-    $("#commitMsg").textContent = `${done} / ${todo.length} enregistrées avant l'erreur.`;
-    $("#commit").disabled = false;
-  }
+    if (fresh.size) await loadResources();
+    await preview();
+    setMsg("#compareMsg", "");
+  } catch (err) { setMsg("#compareMsg", errText(err), true); }
+  $("#compare").disabled = false;
 });
+function renderDiff() {
+  const d = st.diff; if (!d) return;
+  $("#diff").hidden = false;
+  const ch = d.changes || [], notes = [];
+  notes.push(`${ch.length} variation${ch.length > 1 ? "s" : ""} et ${d.unchanged} ligne${d.unchanged > 1 ? "s" : ""} inchangée${d.unchanged > 1 ? "s" : ""} pour ${$("#capPlace").value.trim()}${scanOwner() ? " (inventaire de " + who(scanOwner()) + ")" : ""}.`);
+  const firsts = ch.filter(c => c.initial).length;
+  if (firsts) notes.push(`${firsts} premier${firsts > 1 ? "s" : ""} relevé${firsts > 1 ? "s" : ""} : point de départ, jamais compté comme apport.`);
+  const abs = ch.filter(c => c.absent).length;
+  if (abs) notes.push(`Attention : ${abs} ligne${abs > 1 ? "s" : ""} absente${abs > 1 ? "s" : ""} des captures passer${abs > 1 ? "ont" : "a"} à 0, car tu as indiqué un inventaire complet.`);
+  if (d.duplicate_images) notes.push("Attention : une de ces images a déjà été enregistrée pour ce lieu. Vérifie que ce n'est pas la même capture.");
+  if (d.stale) notes.push(`Attention : cette capture est plus ancienne que le dernier état enregistré (${dateTxt(d.last_state_at)}). L'appliquer remplacerait un état plus récent.`);
+  const dups = st.items.filter(i => i.dup && !i.on).length;
+  if (dups) notes.push(`${dups} case${dups > 1 ? "s" : ""} probablement répétée${dups > 1 ? "s" : ""} entre deux pages ${dups > 1 ? "ont été décochées" : "a été décochée"}.`);
+  $("#diffMsg").innerHTML = notes.map(esc).join("<br>");
+  $("#diffBody").innerHTML = ch.map(c => {
+    const k = `${c.resource_id}|${c.quality_key}|${c.unit}`;
+    const nature = c.initial ? '<span class="tag">Stock initial</span>'
+      : `<select data-reason="${esc(k)}" aria-label="Nature de la variation"><option value="">${c.delta > 0 ? "Hausse à classer (origine inconnue)" : "Baisse à classer (cause inconnue)"}</option>${
+        (c.delta > 0 ? INC_KINDS : DEC_KINDS).map(x => `<option value="${x}"${st.reasons[k] === x ? " selected" : ""}>${KIND[x]}</option>`).join("")}</select>`;
+    return `<tr class="${c.absent ? "low" : ""}"><td>${resCell(resOf(c.resource_id), c.name)}${c.absent ? '<div class="colordesc">absent des captures</div>' : ""}</td>
+      <td class="num">${qLabel(c.quality_key)}</td><td>${esc(c.unit || "objets")}</td><td class="num">${fmt(c.before)}</td><td class="num">${fmt(c.after)}</td>
+      <td class="num ${c.delta > 0 ? "up" : "down"}"><strong>${c.delta > 0 ? "+" : ""}${fmt(c.delta)}</strong></td><td>${nature}</td></tr>`;
+  }).join("") || '<tr><td colspan="7" class="muted">Aucune variation : le stock est identique au dernier relevé.</td></tr>';
+  $("#commit").textContent = ch.length ? `Enregistrer ${ch.length} variation${ch.length > 1 ? "s" : ""}` : "Enregistrer ce relevé";
+  $("#commit").hidden = !!d.stale;
+  $("#forceStale").hidden = !d.stale;
+  $("#commitMsg").textContent = "";
+  $("#diff").scrollIntoView({ block: "nearest" });
+}
+$("#diffBody").addEventListener("change", e => { const s = e.target.closest("[data-reason]"); if (s) st.reasons[s.dataset.reason] = s.value; });
+$("#diffBack").addEventListener("click", () => { hideDiff(); $("#review").scrollIntoView({ block: "nearest" }); });
+async function commitScan(allowStale) {
+  if (!st.diff) return;
+  const place = $("#capPlace").value.trim();
+  $("#commit").disabled = true; $("#forceStale").disabled = true; setMsg("#commitMsg", "Enregistrement…");
+  const reasons = {}; for (const [k, v] of Object.entries(st.reasons)) if (v) reasons[k] = v;
+  try {
+    const res = await rpc("apply_scan", { p: scanPayload({ idempotency_key: st.scanKey, state_token: st.diff.state_token, reasons, allow_stale: !!allowStale }), p_dry_run: false });
+    // Première image du caillou pour les ressources qui n'en ont pas encore.
+    const done = new Set();
+    for (const it of st.items) {
+      if (!it.on || !it.crop || done.has(it.target)) continue;
+      const r = resOf(it.target); done.add(it.target);
+      if (r && !okImg(r.image)) await rpc("set_resource_image", { p_id: r.id, p_image: it.crop }).catch(err => console.warn(err));
+    }
+    const n = (res.changes || []).length;
+    clearCapture(); $("#capNote").value = "";
+    capMsg(`Relevé enregistré pour ${place} : ${n} variation${n > 1 ? "s" : ""}${res.replayed ? " (cette opération était déjà enregistrée)" : ""}.`);
+    await loadStocks(); loadMyMoves();
+  } catch (err) {
+    const m = errText(err);
+    if (/STATE_CHANGED/.test(m)) {
+      try { await preview(); setMsg("#commitMsg", "L'inventaire a changé entre-temps : l'aperçu a été recalculé, vérifie-le avant d'enregistrer.", true); }
+      catch (e2) { setMsg("#commitMsg", errText(e2), true); }
+    } else if (/STALE/.test(m)) {
+      st.diff.stale = true; renderDiff(); setMsg("#commitMsg", m.replace(/^STALE:\s*/, ""), true);
+    } else setMsg("#commitMsg", m, true);
+  }
+  $("#commit").disabled = false; $("#forceStale").disabled = false;
+}
+$("#commit").addEventListener("click", () => commitScan(false));
+$("#forceStale").addEventListener("click", () => commitScan(true));
 
 // ---------- onglet Base de données (administrateurs) ----------
 function showTab(tab) {
   document.querySelectorAll("#appTabs button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
-  $("#stocksView").hidden = tab !== "stocks";
-  $("#dbView").hidden = tab !== "db";
+  for (const v of ["mine", "global", "stats", "db"]) $("#" + v + "View").hidden = tab !== v;
   if (tab === "db") { renderDb(); if (!hist.loaded) loadHistory(true); }
+  if (tab === "stats") loadStats();
 }
 $("#appTabs").addEventListener("click", e => { const b = e.target.closest("button[data-tab]"); if (b) showTab(b.dataset.tab); });
 
@@ -736,7 +1077,7 @@ $("#appTabs").addEventListener("click", e => { const b = e.target.closest("butto
 // écrasée par les mises à jour en temps réel des autres membres.
 const dirty = new Set();
 function dbRow(r) {
-  const txt = placesToText(placesOf(r));
+  const held = st.stocks.filter(s => s.resource_id === r.id && num(s.quantity) > 0);
   return `<tr data-id="${esc(r.id)}">
     <td><input type="color" class="e-color" id="e-color-${esc(r.id)}" value="${okHex(r.color) || "#888888"}" data-had="${okHex(r.color) ? 1 : ""}" aria-label="Couleur de ${esc(r.name)}">
         ${refsOf(r).length ? `<div class="dbimg"><div class="refgrid">${refsOf(r).map((src, k) => `<span class="refcell"><img class="rimg" src="${esc(src)}" alt="" title="${k ? "Vue de référence " + (k + 1) : "Image principale"}"><button type="button" class="tdel" data-act="noimg" data-k="${k - 1}" title="Retirer cette image de référence" aria-label="Retirer cette image">×</button></span>`).join("")}</div><span class="muted" style="font-size:11px">${refsOf(r).length} image${refsOf(r).length > 1 ? "s" : ""} de référence</span></div>` : ""}</td>
@@ -745,8 +1086,7 @@ function dbRow(r) {
     <td><input type="text" class="e-cat" id="e-cat-${esc(r.id)}" value="${esc(r.category)}" list="catList" aria-label="Catégorie"></td>
     <td><input type="text" class="e-unit" id="e-unit-${esc(r.id)}" value="${esc(r.unit)}" aria-label="Unité" style="max-width:80px"></td>
     <td><input type="number" class="e-min" id="e-min-${esc(r.id)}" value="${r.threshold > 0 ? r.threshold : ""}" min="0" step="any" placeholder="aucun" aria-label="Seuil"></td>
-    <td><textarea class="e-lots" id="e-lots-${esc(r.id)}" rows="${Math.min(8, Math.max(2, txt.split("\n").length))}" aria-label="Lots par lieu" placeholder="[Lorville]&#10;258 x 20">${esc(txt)}</textarea></td>
-    <td class="num">${fmt(r.qty)}</td>
+    <td class="num">${esc(sumsText(unitSums(held)))}</td>
     <td><div class="acts"><button type="button" class="primary" data-act="save" disabled>Enregistrer</button><button type="button" class="danger" data-act="del">Supprimer</button></div></td>
   </tr>`;
 }
@@ -762,7 +1102,7 @@ function renderDb() {
   $("#dbEmpty").hidden = st.resources.length > 0;
 
   const opts = st.resources.slice().sort((a, b) => a.name.localeCompare(b.name))
-    .map(r => `<option value="${esc(r.id)}">${esc(r.name)} (${fmt(r.qty)})</option>`).join("");
+    .map(r => `<option value="${esc(r.id)}">${esc(r.name)}</option>`).join("");
   for (const id of ["#mSource", "#mTarget"]) {
     const sel = $(id), cur = sel.value;
     sel.innerHTML = '<option value="">Choisir…</option>' + opts;
@@ -794,7 +1134,7 @@ $("#dbBody").addEventListener("click", async e => {
       await rpc("remove_resource_ref", { p_id: id, p_index: k });
       const rest = Array.isArray(r.refs) ? r.refs.slice() : [];
       if (k < 0) { r.image = rest.shift() || ""; r.refs = rest; } else { rest.splice(k, 1); r.refs = rest; }
-      renderDb(); renderStock(); setStatus("");
+      renderDb(); renderAllStocks(); setStatus("");
     }
     catch (err) { setStatus(errText(err)); b.disabled = false; }
     return;
@@ -812,7 +1152,7 @@ $("#dbBody").addEventListener("click", async e => {
   const color = v(".e-color");
   b.disabled = true;
   try {
-    await applyLots(r, "places", parsePlaces(v(".e-lots").value), "correction", "", {
+    await applyLots(r, "add", {}, "correction", "", {
       name, category: v(".e-cat").value.trim(), unit: v(".e-unit").value.trim(), threshold: num(v(".e-min").value),
       color: color.dataset.touched || color.dataset.had ? color.value : "", color_name: v(".e-colorname").value.trim(),
     });
@@ -829,8 +1169,9 @@ function updateMerge() {
   const m = $("#mMsg"); m.className = "formmsg";
   if (s && t && s.id === t.id) m.textContent = "Choisis deux ressources différentes.";
   else if (s && t) {
-    const after = mergeLots(lotsOf(t), lotsOf(s), "add");
-    m.textContent = `« ${t.name} » passera de ${fmt(t.qty)} à ${fmt(sumLots(after))} unités (${lotsText(after) || "aucun lot"}). « ${s.name} » sera supprimée.`;
+    const lines = st.stocks.filter(x => x.resource_id === s.id && num(x.quantity) > 0);
+    const owners = new Set(lines.map(x => x.user_id)).size;
+    m.textContent = `« ${s.name} » sera supprimée. ${lines.length ? `Ses ${lines.length} ligne${lines.length > 1 ? "s" : ""} de stock (${sumsText(unitSums(lines))}, ${owners} membre${owners > 1 ? "s" : ""}) passeront à « ${t.name} », qualité par qualité.` : "Aucun membre n'en possède."} Images de référence et historique rattachés à « ${t.name} ».`;
   } else m.textContent = "";
 }
 $("#mSource").addEventListener("change", updateMerge);
@@ -842,7 +1183,7 @@ $("#mGo").addEventListener("click", async () => {
   const s = $("#mSource").value, t = $("#mTarget").value;
   try {
     await rpc("merge_resources", { p_source: s, p_target: t });
-    $("#mSource").value = ""; await loadResources();
+    $("#mSource").value = ""; await Promise.all([loadResources(), loadStocks()]);
     const m = $("#mMsg"); m.textContent = "Fusion effectuée."; m.className = "formmsg ok";
     loadHistory(true);
   } catch (err) { const m = $("#mMsg"); m.textContent = errText(err); m.className = "formmsg err"; updateMerge(); }
@@ -867,16 +1208,18 @@ async function loadHistory(reset) {
   hist.rows.push(...(data || [])); hist.page++; hist.done = (data || []).length < HPAGE;
   renderHistory();
 }
-const canUndo = m => !m.undone_at && m.lots_before && m.lots_after && !["delete", "merge", "undo"].includes(m.mode) && st.resources.some(r => r.id === m.resource_id);
+// Les stocks personnels se corrigent par un mouvement « Correction » (l'historique est conservé) :
+// l'annulation automatique ne concerne que l'ancien registre, avant les inventaires personnels.
+const canUndo = m => !st.v2 && !m.undone_at && m.lots_before && m.lots_after && !["delete", "merge", "undo"].includes(m.mode) && st.resources.some(r => r.id === m.resource_id);
 function renderHistory() {
   $("#hBody").innerHTML = hist.rows.map(m => {
-    const d = num(m.after) - num(m.before);
-    const who = (st.profiles[m.by] && st.profiles[m.by].pseudo) || "Un membre";
+    const d = m.delta != null ? num(m.delta) : num(m.after) - num(m.before);
+    const author = (st.profiles[m.by] && st.profiles[m.by].pseudo) || "Un membre";
     const when = new Date(m.at).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" });
     const act = m.undone_at ? '<span class="tag">Annulé</span>' : canUndo(m) ? `<button type="button" data-undo="${m.id}">Annuler</button>` : "";
     return `<tr class="${m.undone_at ? "undone" : ""}">
-      <td class="num" style="white-space:nowrap">${when}</td><td>${esc(who)}</td><td><strong>${esc(m.name)}</strong>${m.place ? `<br><span class="muted" style="font-size:12px">${esc(m.place)}</span>` : ""}</td>
-      <td><span class="tag">${modeLabel[m.mode] || esc(m.mode)}</span>${m.source === "capture" ? '<br><span class="muted" style="font-size:12px">par capture</span>' : ""}</td>
+      <td class="num" style="white-space:nowrap">${when}</td><td>${esc(author)}</td><td><strong>${esc(m.name)}</strong><br><span class="muted" style="font-size:12px">${m.owner_id ? `${esc(who(m.owner_id))} · ${esc(locName(m.location_id))} · ${qLabel(m.quality_key)}` : "Ancien registre"}</span></td>
+      <td><span class="tag">${esc(m.kind ? KIND[m.kind] || m.kind : modeLabel[m.mode] || m.mode)}</span>${m.source === "capture" ? '<br><span class="muted" style="font-size:12px">par capture</span>' : ""}</td>
       <td class="num" style="white-space:nowrap">${fmt(m.before)} → ${fmt(m.after)} <span class="${d > 0 ? "up" : d < 0 ? "down" : ""}">(${d > 0 ? "+" : ""}${fmt(d)})</span></td>
       <td class="num" style="font-size:12px">${esc(m.detail)}</td><td style="font-size:13px">${esc(m.note)}</td><td>${act}</td></tr>`;
   }).join("") || '<tr><td colspan="8" class="muted">Aucun mouvement pour ces filtres.</td></tr>';
@@ -913,17 +1256,7 @@ async function allMovements() {
     if (data.length < 1000) return out;
   }
 }
-$("#expStock").addEventListener("click", () => {
-  const rows = [["Ressource", "Lieu", "Catégorie", "Unité", "Quantité", "Qualité moyenne", "Lots", "Seuil", "Couleur", "Description couleur"]];
-  for (const r of st.resources.slice().sort((a, b) => a.name.localeCompare(b.name))) {
-    const pl = placesOf(r);
-    for (const k of placeKeys(pl)) {
-      const l = pl[k];
-      rows.push([r.name, placeLabel(k), r.category, r.unit, frNum(sumLots(l)), avgQ(l) ?? "", lotsText(l), r.threshold ? frNum(r.threshold) : "", r.color, r.color_name]);
-    }
-  }
-  download(`stocks-${today()}.csv`, csv(rows), "text/csv;charset=utf-8");
-});
+$("#expStock").addEventListener("click", () => exportStocks(st.stocks.filter(x => num(x.quantity) > 0), true));
 $("#expLog").addEventListener("click", async e => {
   const b = e.currentTarget; b.disabled = true;
   try {
@@ -938,9 +1271,12 @@ $("#expLog").addEventListener("click", async e => {
 async function backupJson() {
   const { data: resources, error } = await sb.from("resources").select("*").order("name");
   if (error) throw error;
+  const extra = {};
+  if (st.v2) for (const [t, o] of [["locations", "name"], ["user_stocks", "id"], ["legacy_stocks", "id"], ["inventory_scans", "id"], ["scan_items", "id"]])
+    extra[t] = await fetchAll(t, "*", o);
   const backup = {
     exported_at: new Date().toISOString(),
-    resources,
+    resources, ...extra,
     movements: await allMovements(),
     profiles: Object.values(st.profiles).map(p => ({ id: p.id, pseudo: p.pseudo, role: p.role, created_at: p.created_at })),
   };
@@ -972,7 +1308,7 @@ $("#rstGo").addEventListener("click", async () => {
     await rpc("reset_registre", { p_confirm: "REINITIALISER" });
     dirty.clear(); $("#rstConfirm").value = "";
     m.textContent = "Base réinitialisée. La sauvegarde a été téléchargée."; m.className = "formmsg ok";
-    await Promise.all([loadResources(), loadMoves()]); loadHistory(true);
+    await Promise.all([loadResources(), loadMoves(), loadStocks()]); loadHistory(true);
   } catch (err) { m.textContent = errText(err); m.className = "formmsg err"; b.disabled = false; }
   b.classList.remove("armed"); b.textContent = "Tout effacer"; b.disabled = $("#rstConfirm").value.trim() !== "REINITIALISER";
 });

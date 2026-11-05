@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="style.css?v=8">
+<link rel="stylesheet" href="style.css?v=9">
 </head>
 <body>
 
@@ -71,7 +71,7 @@
     </div>
     <div class="stats">
       <div class="stat"><b id="stCount">–</b><span>Ressources</span></div>
-      <div class="stat"><b id="stTotal">–</b><span>Unités en stock</span></div>
+      <div class="stat"><b id="stTotal">–</b><span>Unités chez les membres</span></div>
       <div class="stat" id="stLowBox"><b id="stLow">–</b><span>Sous le seuil</span></div>
     </div>
   </header>
@@ -83,20 +83,21 @@
     <button type="button" class="logout">Se déconnecter</button>
   </div>
 
-  <nav class="apptabs" id="appTabs" role="tablist" hidden>
-    <button type="button" role="tab" data-tab="stocks" aria-selected="true">Stocks</button>
-    <button type="button" role="tab" data-tab="db" aria-selected="false">Base de données</button>
+  <nav class="apptabs" id="appTabs" role="tablist">
+    <button type="button" role="tab" data-tab="mine" aria-selected="true">Mon inventaire</button>
+    <button type="button" role="tab" data-tab="global" aria-selected="false">Inventaire global</button>
+    <button type="button" role="tab" data-tab="stats" aria-selected="false">Contributions</button>
+    <button type="button" role="tab" data-tab="db" aria-selected="false" id="tabDb" hidden>Base de données</button>
   </nav>
 
   <div id="status" hidden></div>
 
-  <div class="view" id="stocksView">
+  <div class="view" id="mineView">
   <section class="panel" id="capturePanel">
     <div class="panel-h">
       <div>
-        <h2>Lire une capture d'écran</h2>
-        <div class="muted" style="font-size:14px">Capture ton inventaire en jeu et colle-le ici, page par page s'il en a plusieurs. Vérifie les quantités lues, puis enregistre tout d'un coup.</div>
-        <div class="muted" style="font-size:13px">Les minerais sont aussi reconnus à la couleur de leur caillou : renseigne la couleur de chacun avec le bouton Modifier pour que la reconnaissance soit fiable.</div>
+        <h2>Capturer mon inventaire</h2>
+        <div class="muted" style="font-size:14px">Une capture est un relevé de ton stock dans un lieu : le site le compare à ton dernier relevé et n'enregistre que les variations. Colle toutes les pages d'un même inventaire avant d'analyser.</div>
       </div>
     </div>
     <div class="panel-b">
@@ -112,18 +113,28 @@
           <input type="file" id="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden>
         </div>
         <div class="cap-side">
-          <div>
-            <div style="font-size:13px;color:var(--muted);margin-bottom:6px">Que montrent les captures ?</div>
-            <div class="seg" role="radiogroup">
-              <label><input type="radio" name="capMode" id="capModeSet" value="set" checked> Le stock complet du lieu (remplace)</label>
-              <label><input type="radio" name="capMode" id="capModeAdd" value="add"> Une récolte (ajoute)</label>
-              <label><input type="radio" name="capMode" id="capModeRemove" value="remove"> Une sortie (retire)</label>
-            </div>
-          </div>
-          <label>Lieu de stockage
-            <input type="text" id="capPlace" list="placeList" maxlength="80" placeholder="Choisis ou tape une station, une ville…" autocomplete="off">
-            <span style="font-size:12px">Les lots enregistrés vont dans ce lieu. « Stock complet » ne remplace que le stock de ce lieu.</span>
+          <label id="capOwnerBox" hidden>Inventaire de (administrateur)
+            <select id="capOwner"></select>
           </label>
+          <label>Lieu de stockage
+            <input type="text" id="capPlace" list="placeList" maxlength="80" placeholder="Choisis ou tape une station, une ville…" autocomplete="off" required>
+          </label>
+          <label>Écran capturé
+            <select id="capTerminal">
+              <option value="">Détection automatique</option>
+              <option value="inventaire">Inventaire personnel</option>
+              <option value="ascenseur_fret">Ascenseur de fret</option>
+              <option value="autre">Autre écran</option>
+            </select>
+          </label>
+          <div>
+            <div style="font-size:13px;color:var(--muted);margin-bottom:6px">Les captures montrent…</div>
+            <div class="seg" role="radiogroup">
+              <label><input type="radio" name="capCov" id="capCovPartial" value="partial" checked> Une partie de l'inventaire</label>
+              <label><input type="radio" name="capCov" id="capCovComplete" value="complete"> Tout l'inventaire de ce lieu</label>
+            </div>
+            <span class="muted" style="font-size:12px" id="capCovHint">Seuls les minerais visibles sont mis à jour ; les autres ne changent pas.</span>
+          </div>
           <label>Note (facultatif)
             <input type="text" id="capNote" placeholder="ex. Soute du cargo, entrepôt principal">
           </label>
@@ -138,12 +149,29 @@
       <div class="review" id="review" hidden>
         <div class="scroll">
           <table>
-            <thead><tr><th></th><th>Page</th><th>Lu sur la capture</th><th>Couleur vue</th><th>Qualité</th><th>Quantité</th><th>Ressource du registre</th><th>Résultat (total)</th></tr></thead>
+            <thead><tr><th></th><th>Page</th><th>Lu sur la capture</th><th>Case</th><th>Qualité</th><th>Quantité</th><th>Unité</th><th>Ressource du catalogue</th></tr></thead>
             <tbody id="reviewBody"></tbody>
           </table>
         </div>
         <div class="row">
+          <button class="primary" id="compare">Comparer avec mon stock</button>
+          <span class="muted" id="compareMsg" style="font-size:14px"></span>
+        </div>
+      </div>
+
+      <div class="review" id="diff" hidden>
+        <h3 style="margin:0">Variations par rapport au dernier relevé</h3>
+        <div id="diffMsg" class="muted"></div>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Ressource</th><th>Qualité</th><th>Unité</th><th>Avant</th><th>Observé</th><th>Variation</th><th>Nature</th></tr></thead>
+            <tbody id="diffBody"></tbody>
+          </table>
+        </div>
+        <div class="row">
           <button class="primary" id="commit">Enregistrer</button>
+          <button type="button" id="diffBack">Revenir à la lecture</button>
+          <button type="button" class="danger" id="forceStale" hidden>Appliquer quand même</button>
           <span class="muted" id="commitMsg" style="font-size:14px"></span>
         </div>
       </div>
@@ -153,32 +181,127 @@
   <div class="main">
     <section class="panel">
       <div class="panel-h">
-        <h2>Stocks</h2>
+        <h2 id="mineTitle">Mon inventaire</h2>
         <div class="filters">
-          <input type="search" id="q" placeholder="Rechercher…" aria-label="Rechercher une ressource">
+          <select id="mOwner" aria-label="Inventaire du membre"></select>
+          <select id="mLoc" aria-label="Filtrer par lieu"></select>
+        </div>
+      </div>
+      <div class="panel-b chips" id="mineScans"></div>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Ressource</th><th>Lieu</th><th>Qualité</th><th>Quantité</th><th>Mis à jour</th><th></th></tr></thead>
+          <tbody id="mineBody"></tbody>
+        </table>
+      </div>
+      <div class="empty" id="mineEmpty"><strong>Aucun stock enregistré</strong><span>Capture ton inventaire ci-dessus : le premier relevé d'un lieu sert de point de départ.</span></div>
+      <form class="panel-b moveform" id="moveForm">
+        <h3 style="margin:0">Déclarer un mouvement</h3>
+        <div class="moverow">
+          <label>Ressource<select id="mvRes" required></select></label>
+          <label>Lieu<input type="text" id="mvPlace" list="placeList" maxlength="80" required autocomplete="off"></label>
+          <label>Qualité<input type="number" id="mvQ" min="0" max="1000" step="1" placeholder="?"></label>
+          <label>Quantité<input type="number" id="mvQty" min="0" step="any" required></label>
+          <label>Unité<input type="text" id="mvUnit" list="unitList" maxlength="20" placeholder="objets (20x)"></label>
+          <label>Nature<select id="mvKind"></select></label>
+        </div>
+        <label>Motif ou note<input type="text" id="mvNote" maxlength="300" placeholder="Obligatoire pour une correction"></label>
+        <div class="row"><button class="primary" type="submit" id="mvGo">Enregistrer le mouvement</button><span class="formmsg" id="mvMsg"></span></div>
+      </form>
+    </section>
+
+    <aside class="panel">
+      <div class="panel-h"><h2>Mouvements</h2><span class="muted" style="font-size:13px">50 derniers</span></div>
+      <ul class="log" id="myMoves"></ul>
+      <div class="empty" id="myMovesEmpty"><span>Les variations constatées, dépôts et retraits apparaîtront ici.</span></div>
+    </aside>
+  </div>
+  </div>
+
+  <!-- ===== Inventaire global ===== -->
+  <div class="view" id="globalView" hidden>
+  <div class="main">
+    <section class="panel">
+      <div class="panel-h">
+        <h2>Inventaire global</h2>
+        <div class="filters">
+          <input type="search" id="q" placeholder="Rechercher un minerai…" aria-label="Rechercher une ressource">
           <select id="cat" aria-label="Filtrer par catégorie"><option value="">Toutes catégories</option></select>
-          <select id="placeF" aria-label="Filtrer par lieu"><option value="*">Tous les lieux</option></select>
+          <select id="gLoc" aria-label="Filtrer par lieu"></select>
+          <select id="gMember" aria-label="Filtrer par membre"></select>
+          <input type="number" id="gQmin" min="0" max="1000" placeholder="Q min" aria-label="Qualité minimale" class="qin">
+          <input type="number" id="gQmax" min="0" max="1000" placeholder="Q max" aria-label="Qualité maximale" class="qin">
+          <button type="button" id="gExport">Export CSV</button>
           <button class="primary" id="addRes">Ajouter une ressource</button>
         </div>
       </div>
       <div class="scroll">
         <table>
-          <thead><tr><th>Ressource</th><th>Quantité</th><th>Qualité</th><th>État</th><th>Mouvement rapide (Q · qté)</th><th></th></tr></thead>
+          <thead><tr><th>Ressource</th><th>Total</th><th>Qualité</th><th>Détenteurs</th><th></th></tr></thead>
           <tbody id="stockBody"></tbody>
         </table>
       </div>
       <div class="empty" id="stockEmpty">
-        <strong>Le registre est vide</strong>
-        <span>Colle une capture de ton inventaire ci-dessus, ou ajoute une première ressource à la main.</span>
+        <strong>Aucun stock pour ces filtres</strong>
+        <span>Les stocks apparaissent ici dès qu'un membre enregistre la capture de son inventaire.</span>
       </div>
     </section>
 
     <aside class="panel">
       <div class="panel-h"><h2>Journal</h2><span class="muted" style="font-size:13px">40 derniers mouvements</span></div>
       <ul class="log" id="log"></ul>
-      <div class="empty" id="logEmpty"><span>Chaque entrée, sortie et correction de stock apparaîtra ici avec son auteur.</span></div>
+      <div class="empty" id="logEmpty"><span>Chaque variation de stock apparaîtra ici avec son auteur.</span></div>
     </aside>
   </div>
+
+    <section class="panel" id="legacyPanel" hidden>
+      <div class="panel-h">
+        <div>
+          <h2>Anciens stocks non attribués</h2>
+          <div class="muted" style="font-size:14px">Stocks enregistrés avant les inventaires personnels. Ils ne sont <strong>pas</strong> comptés dans le total ci-dessus. Un administrateur peut les attribuer à un membre, ou les archiver s'ils sont déjà comptés dans un inventaire.</div>
+        </div>
+        <span class="muted" id="legacyTotal"></span>
+      </div>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Ressource</th><th>Lieu</th><th>Qualité</th><th>Quantité</th><th></th></tr></thead>
+          <tbody id="legacyBody"></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <!-- ===== Contributions ===== -->
+  <div class="view" id="statsView" hidden>
+    <section class="panel">
+      <div class="panel-h">
+        <div>
+          <h2>Contributions</h2>
+          <div class="muted" style="font-size:14px">Le stock initial n'est jamais compté comme un apport. Une hausse dont l'origine n'est pas précisée reste « à classer » et ne compte pas comme production.</div>
+        </div>
+      </div>
+      <div class="panel-b hfilters">
+        <label>Du<input type="date" id="sFrom"></label>
+        <label>Au<input type="date" id="sTo"></label>
+        <label>Membre<select id="sMember"></select></label>
+        <button type="button" class="primary" id="sGo">Afficher</button>
+      </div>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Membre</th><th>Production</th><th>Autres apports</th><th>Hausses à classer</th><th>Retraits</th><th>Baisses à classer</th><th>Stock initial</th><th>Corrections</th></tr></thead>
+          <tbody id="statsBody"></tbody>
+        </table>
+      </div>
+    </section>
+    <section class="panel">
+      <div class="panel-h"><h2>Historique des apports</h2><span class="muted" id="contribCount"></span></div>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Date</th><th>Membre</th><th>Ressource</th><th>Lieu</th><th>Qualité</th><th>Variation</th><th>Nature</th></tr></thead>
+          <tbody id="contribBody"></tbody>
+        </table>
+      </div>
+    </section>
   </div>
 
   <!-- ===== Base de données (administrateurs) ===== -->
@@ -190,7 +313,7 @@
           <div class="muted" style="font-size:14px">Les fichiers CSV s'ouvrent dans Excel. La sauvegarde JSON contient toute la base.</div>
         </div>
         <div class="row">
-          <button type="button" id="expStock">Stocks (CSV)</button>
+          <button type="button" id="expStock">Stocks des membres (CSV)</button>
           <button type="button" id="expLog">Journal complet (CSV)</button>
           <button type="button" id="expJson">Sauvegarde complète (JSON)</button>
         </div>
@@ -201,13 +324,13 @@
       <div class="panel-h">
         <div>
           <h2>Ressources</h2>
-          <div class="muted" style="font-size:14px">Modifie directement une ligne, puis clique sur Enregistrer. Lots : une ligne par qualité, ex. <span class="num">258 x 20</span>, sous le nom du lieu entre crochets, ex. <span class="num">[Lorville]</span>.</div>
+          <div class="muted" style="font-size:14px">Catalogue des ressources : nom, couleur, catégorie, seuil d'alerte et images de référence. Les quantités se gèrent dans les inventaires des membres.</div>
         </div>
         <input type="search" id="dbQ" placeholder="Rechercher…" aria-label="Rechercher une ressource">
       </div>
       <div class="scroll">
         <table class="dbtable">
-          <thead><tr><th>Couleur</th><th>Nom et description</th><th>Catégorie</th><th>Unité</th><th>Seuil</th><th>Lots par lieu</th><th>Total</th><th></th></tr></thead>
+          <thead><tr><th>Couleur</th><th>Nom et description</th><th>Catégorie</th><th>Unité</th><th>Seuil</th><th>Total membres</th><th></th></tr></thead>
           <tbody id="dbBody"></tbody>
         </table>
       </div>
@@ -281,10 +404,6 @@
       <label>Catégorie<input type="text" id="fCat" list="catList" placeholder="ex. Minerai brut"></label>
       <label>Unité<input type="text" id="fUnit" placeholder="ex. SCU"></label>
     </div>
-    <label>Lots en stock, par lieu
-      <textarea id="fLots" rows="5" placeholder="[Lorville]&#10;258 x 20&#10;[Port Tressler]&#10;1000 x 6"></textarea>
-      <span style="font-size:12px">Le nom du lieu entre crochets, puis une ligne par qualité : <span class="num">258 x 20</span> = 20 unités de qualité 258. Un nombre seul = quantité sans qualité connue. Sans lieu = lieu non précisé.</span>
-    </label>
     <label>Seuil d'alerte (quantité totale)<input type="number" id="fMin" step="any" min="0" placeholder="aucun"></label>
     <label>Couleur du caillou en jeu
       <span class="colorrow">
@@ -295,6 +414,7 @@
     </label>
     <datalist id="catList"></datalist>
     <datalist id="placeList"></datalist>
+    <datalist id="unitList"><option value="SCU"><option value="cSCU"><option value="µSCU"></datalist>
     <div class="dlg-actions">
       <button type="button" class="danger" id="fDelete" hidden>Supprimer</button>
       <span style="flex:1"></span>
@@ -318,7 +438,8 @@
 </dialog>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-<script src="config.js?v=8"></script>
-<script src="app.js?v=8"></script>
+<script src="config.js?v=9"></script>
+<script src="scanlogic.js?v=9"></script>
+<script src="app.js?v=9"></script>
 </body>
 </html>

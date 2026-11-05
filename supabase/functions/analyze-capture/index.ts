@@ -17,14 +17,16 @@ type MediaType = (typeof MEDIA_TYPES)[number];
 const SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["items"],
+  required: ["terminal_type", "items"],
   properties: {
+    // Écran du jeu : l'inventaire affiché est le même quel que soit l'écran ; c'est une simple information.
+    terminal_type: { type: "string", enum: ["inventaire", "ascenseur_fret", "autre", "inconnu"] },
     items: {
       type: "array",
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["name", "quality", "qty", "unit", "color", "hex", "by", "box"],
+        required: ["name", "quality", "qty", "unit", "color", "hex", "by", "box", "confidence"],
         properties: {
           name: { type: "string" },
           quality: { type: ["integer", "null"] },
@@ -35,6 +37,8 @@ const SCHEMA = {
           by: { type: "string", enum: ["nom", "couleur", "inconnu"] },
           // Position du caillou dans l'image, en millièmes : [gauche, haut, droite, bas].
           box: { type: "array", items: { type: "integer" } },
+          // Confiance de 0 à 1 dans l'identification ET dans les nombres lus.
+          confidence: { type: "number" },
         },
       },
     },
@@ -44,6 +48,7 @@ const SCHEMA = {
 function buildPrompt(known: string, refs: number) {
   return `La capture d'écran à analyser (la dernière image, juste avant ce texte) vient d'un jeu vidéo. Elle montre un inventaire, une soute, un entrepôt ou une liste de ressources (minerais, cailloux, matériaux, marchandises).
 Ignore tout ce qui n'est pas une ressource : équipement, armes, armures, outils, consommables, boutons, menus, crédits, noms de joueurs.
+ÉCRAN : indique dans terminal_type l'écran capturé : "inventaire" pour l'inventaire personnel ou local du personnage (panneaux « Personnel », « Local », vue d'équipement), "ascenseur_fret" pour l'interface d'un ascenseur de fret ou d'un terminal d'entrepôt (liste de marchandises et de caisses, chargement et déchargement), "autre" pour un autre écran, "inconnu" si tu ne sais pas.
 FORMAT DES CASES : chaque case de minerai est un LOT.
 - Le nombre suivi de « Q » (ex. « 258Q ») est la QUALITÉ du lot, de 0 à 1000. Ce n'est PAS une quantité.
 - Le nombre suivi de « x » (ex. « 20x ») est la QUANTITÉ d'unités dans le lot. S'il n'y a pas de « x », la quantité est 1.
@@ -59,7 +64,8 @@ ${refs ? `IMAGES DE RÉFÉRENCE : avant la capture, tu as reçu ${refs} image(s)
 1. Si un nom est écrit et correspond à une ressource connue (même avec une orthographe, une casse ou une langue un peu différente), reprends exactement le nom connu. by = "nom".
 2. Si aucun nom n'est lisible, compare le caillou aux images de référence et aux couleurs connues, et reprends le nom de la ressource qui correspond le mieux. by = "couleur".
 3. Si ni le nom ni la couleur ne correspondent, mets le nom écrit s'il y en a un, sinon "Caillou <couleur>" (ex. "Caillou vert pâle"). by = "inconnu".
-Champs : quality = entier 0-1000 ou null si aucune qualité affichée ; qty = nombre ; unit = chaîne vide si aucune unité visible ; color = description en français de la couleur observée ; hex = son approximation en #rrggbb ; box = rectangle serré autour du dessin du caillou seul, SANS le texte de qualité ni de quantité ni l'icône en coin, en millièmes de la largeur et de la hauteur de la capture : [gauche, haut, droite, bas], chaque valeur de 0 à 1000.
+UNITÉS : recopie l'unité exactement comme le jeu l'affiche (« SCU », « cSCU », « µSCU »…). Pour une quantité affichée « 20x » (nombre d'objets), unit = chaîne vide : ne convertis JAMAIS des objets en SCU ni l'inverse.
+Champs : quality = entier 0-1000 ou null si aucune qualité affichée ; qty = nombre ; unit = unité affichée, chaîne vide pour un nombre d'objets ; confidence = ta confiance de 0 à 1 dans l'identification du minerai ET dans les nombres lus (baisse-la si le texte est flou, coupé, masqué, ou si deux références se ressemblent) ; color = description en français de la couleur observée ; hex = son approximation en #rrggbb ; box = rectangle serré autour du dessin du caillou seul, SANS le texte de qualité ni de quantité ni l'icône en coin, en millièmes de la largeur et de la hauteur de la capture : [gauche, haut, droite, bas], chaque valeur de 0 à 1000.
 Si tu ne vois aucune ressource, renvoie une liste vide.`;
 }
 

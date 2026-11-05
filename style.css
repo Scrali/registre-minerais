@@ -213,3 +213,20 @@ tr.undone td:last-child{text-decoration:none}
 .refcell{position:relative}
 .refcell .rimg{margin:0}
 .refcell .tdel{position:absolute;top:-6px;right:-6px;width:18px;height:18px;min-height:0;padding:0;line-height:16px;border-radius:50%;font-size:12px}
+/* Inventaires personnels */
+.filters input.qin{width:84px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;padding-top:10px;padding-bottom:0}
+.chips .chip{margin-left:0;text-transform:none;letter-spacing:0;font-size:12px}
+.tag.warn{color:var(--warn)}
+.warns{margin-top:4px;display:flex;flex-wrap:wrap;gap:6px}
+tr.off td{opacity:.55}
+tr.off td:first-child{opacity:1}
+tr.detail>td{background:var(--soft);padding:8px 12px}
+table.sub{width:100%;font-size:13px}
+table.sub th,table.sub td{padding:4px 8px}
+.uin{width:80px}
+.moveform{display:grid;gap:10px;border-top:1px solid var(--line)}
+.moverow{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
+.legacy-acts{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.legacy-acts input{width:130px}
+#diff h3{font-size:16px}

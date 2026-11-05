@@ -14,7 +14,7 @@ Fonctionnement technique détaillé (architecture, données, sécurité) : [`doc
 
 1. Crée un compte sur [supabase.com](https://supabase.com), puis un projet (offre **Free**, région Europe).
 2. Ouvre **SQL Editor** > **New query**, colle tout le contenu de [`supabase/schema.sql`](supabase/schema.sql), puis clique sur **Run**.
-   Fais ensuite de même avec [`supabase/migrations/002_base_de_donnees.sql`](supabase/migrations/002_base_de_donnees.sql) (fusion et annulation, pour l'onglet Base de données), puis [`supabase/migrations/003_image_ressource.sql`](supabase/migrations/003_image_ressource.sql) (image du caillou de chaque ressource), puis [`supabase/migrations/004_lieux_et_reinitialisation.sql`](supabase/migrations/004_lieux_et_reinitialisation.sql) (lieux de stockage et réinitialisation), puis [`supabase/migrations/005_references_multiples.sql`](supabase/migrations/005_references_multiples.sql) (plusieurs images de référence par minerai).
+   Fais ensuite de même avec [`supabase/migrations/002_base_de_donnees.sql`](supabase/migrations/002_base_de_donnees.sql) (fusion et annulation, pour l'onglet Base de données), puis [`supabase/migrations/003_image_ressource.sql`](supabase/migrations/003_image_ressource.sql) (image du caillou de chaque ressource), puis [`supabase/migrations/004_lieux_et_reinitialisation.sql`](supabase/migrations/004_lieux_et_reinitialisation.sql) (lieux de stockage et réinitialisation), puis [`supabase/migrations/005_references_multiples.sql`](supabase/migrations/005_references_multiples.sql) (plusieurs images de référence par minerai), puis [`supabase/migrations/006_stocks_personnels.sql`](supabase/migrations/006_stocks_personnels.sql) (stocks personnels par membre et par lieu, voir [`docs/STOCKS_PERSONNELS.md`](docs/STOCKS_PERSONNELS.md)).
 3. Dans **Authentication** > **Sign In / Providers** > **Email**, désactive **Confirm email**.
    L'offre gratuite n'envoie que quelques e-mails par heure, et la validation des comptes par un administrateur remplace déjà cette confirmation.
 4. Dans **Authentication** > **URL Configuration**, mets l'adresse du site GitHub Pages dans **Site URL** et dans **Redirect URLs** (nécessaire pour « Mot de passe oublié »).
@@ -42,8 +42,17 @@ Ouvre le site et crée ton compte : **le premier compte inscrit devient administ
 | Rôle | Peut faire |
 |---|---|
 | En attente | Rien, attend la validation |
-| Membre | Voir et modifier les stocks, analyser des captures |
-| Administrateur | Tout ce que fait un membre, plus valider et gérer les comptes |
+| Membre | Voir les inventaires de tous les membres, modifier et capturer le sien |
+| Administrateur | Tout ce que fait un membre, plus corriger les inventaires (avec motif), rapprocher les anciens stocks, gérer le catalogue et les comptes |
+
+## Tests automatisés
+
+```bash
+npm install
+npm test
+```
+
+Les tests rejouent le schéma et toutes les migrations sur une base Postgres en mémoire (PGlite), avec les mêmes règles de sécurité que Supabase.
 
 ## Tester en local
 
