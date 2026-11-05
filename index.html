@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="style.css?v=12">
+<link rel="stylesheet" href="style.css?v=13">
 </head>
 <body>
 
@@ -48,7 +48,12 @@
 <section class="gate" id="pendingView" hidden>
   <h1>Compte en attente</h1>
   <div class="panel panel-b">
-    <p style="margin:0">Ton compte <strong id="pendingName"></strong> est créé. Un administrateur de l'organisation doit le valider avant que tu puisses voir les stocks.</p>
+    <p style="margin:0">Ton compte <strong id="pendingName"></strong> est créé. Choisis ton organisation : un de ses administrateurs validera ta demande.</p>
+    <div class="row" id="pOrgBox">
+      <select id="pOrg" aria-label="Organisation à rejoindre"></select>
+      <button type="button" class="primary" id="pJoin">Envoyer la demande</button>
+    </div>
+    <p class="formmsg" id="pMsg" style="margin:0"></p>
     <p class="muted" style="margin:0;font-size:14px">Cette page s'ouvrira toute seule dès que ton compte sera validé.</p>
     <div class="row"><button type="button" class="logout">Se déconnecter</button></div>
   </div>
@@ -78,6 +83,7 @@
   <div class="account">
     <span>Connecté en tant que <strong id="meName"></strong></span>
     <span class="role" id="meRole"></span>
+    <span class="chip" id="meOrg" hidden></span>
     <span style="flex:1"></span>
     <button type="button" id="openMembers" hidden>Membres<span class="pending-count" id="pendingCount" hidden></span></button>
     <button type="button" class="logout">Se déconnecter</button>
@@ -85,7 +91,7 @@
 
   <nav class="apptabs" id="appTabs" role="tablist">
     <button type="button" role="tab" data-tab="mine" aria-selected="true">Mon inventaire</button>
-    <button type="button" role="tab" data-tab="global" aria-selected="false">Inventaire global</button>
+    <button type="button" role="tab" data-tab="global" aria-selected="false" id="tabGlobal">Inventaire global</button>
     <button type="button" role="tab" data-tab="stats" aria-selected="false">Contributions</button>
     <button type="button" role="tab" data-tab="img" aria-selected="false" id="tabImg" hidden>Images</button>
     <button type="button" role="tab" data-tab="db" aria-selected="false" id="tabDb" hidden>Base de données</button>
@@ -389,7 +395,7 @@
       <div class="empty" id="dbEmpty" hidden><span>Aucune ressource dans la base.</span></div>
     </section>
 
-    <section class="panel">
+    <section class="panel" id="mergePanel">
       <div class="panel-h">
         <div>
           <h2>Fusionner deux ressources</h2>
@@ -431,7 +437,7 @@
       </div>
     </section>
 
-    <section class="panel danger-zone">
+    <section class="panel danger-zone" id="resetPanel">
       <div class="panel-h">
         <div>
           <h2>Réinitialiser la base</h2>
@@ -480,7 +486,12 @@
 <dialog id="members">
   <div class="memb">
     <h2>Membres</h2>
-    <span class="muted" style="font-size:14px">Valide les nouveaux comptes avant qu'ils voient les stocks. Les administrateurs gèrent les membres.</span>
+    <span class="muted" style="font-size:14px">Valide les demandes, choisis le rôle et les droits de chacun. Un administrateur a tous les droits dans son organisation.</span>
+  </div>
+  <div class="org-box" id="orgBox" hidden>
+    <h3>Organisations</h3>
+    <div id="orgList"></div>
+    <div class="row"><input type="text" id="orgName" maxlength="60" placeholder="Nom de la nouvelle organisation" aria-label="Nom de la nouvelle organisation"><button type="button" id="orgAdd">Créer</button></div>
   </div>
   <div class="memb-list" id="membList"></div>
   <div class="dlg-actions" style="padding:16px 20px">
@@ -490,8 +501,8 @@
 </dialog>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-<script src="config.js?v=12"></script>
-<script src="scanlogic.js?v=12"></script>
-<script src="app.js?v=12"></script>
+<script src="config.js?v=13"></script>
+<script src="scanlogic.js?v=13"></script>
+<script src="app.js?v=13"></script>
 </body>
 </html>

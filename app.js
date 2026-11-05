@@ -20,7 +20,7 @@ const cfg = window.REGISTRE_CONFIG || {};
 const configured = /^https:\/\/.+/.test(cfg.supabaseUrl || "") && cfg.supabaseKey && !/TON-PROJET|TA-CLE/.test(cfg.supabaseUrl + cfg.supabaseKey);
 const sb = configured ? window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseKey) : null;
 
-const st = { me: null, profiles: {}, resources: [], moves: [], shots: [], items: [], channel: null, recovering: false,
+const st = { me: null, profiles: {}, orgs: [], resources: [], moves: [], shots: [], items: [], channel: null, recovering: false,
   stocks: [], locations: [], legacy: [], scansMeta: [], myMoves: [], reasons: {}, diff: null, scanKey: null, v2: false,
   refImages: [], libReady: false };
 
@@ -185,21 +185,61 @@ async function enter(session) {
   if (error || !me) { show("authView"); authMsg("Profil introuvable. Contacte un administrateur.", "err"); return; }
   st.me = me;
   startRealtime();
-  if (me.role === "pending") { $("#pendingName").textContent = me.pseudo; return show("pendingView"); }
+  if (me.role === "pending" && !me.is_owner) { $("#pendingName").textContent = me.pseudo; loadPendingOrgs(); return show("pendingView"); }
   $("#meName").textContent = me.pseudo;
-  $("#meRole").textContent = me.role === "admin" ? "Administrateur" : "Membre";
-  $("#meRole").className = "role" + (me.role === "admin" ? " admin" : "");
-  $("#openMembers").hidden = me.role !== "admin";
-  $("#tabDb").hidden = me.role !== "admin";
-  if (me.role !== "admin" && !$("#dbView").hidden) showTab("mine");
+  applyRights();
   show("appView");
-  await Promise.all([loadProfiles(), loadResources(), loadMoves(), loadStocks(), loadRefImages()]);
+  await Promise.all([loadOrgs(), loadProfiles(), loadResources(), loadMoves(), loadStocks(), loadRefImages()]);
   loadMyMoves();
 }
 
 // ---------- données ----------
+// Ce que le compte connecté peut voir et faire (le serveur vérifie de toute façon chaque action).
+function applyRights() {
+  const me = st.me; if (!me) return;
+  $("#meRole").textContent = me.is_owner ? "Propriétaire" : me.role === "admin" ? "Administrateur" : "Membre";
+  $("#meRole").className = "role" + (isAdmin() ? " admin" : "");
+  const org = orgName(me.org_id); $("#meOrg").textContent = org; $("#meOrg").hidden = !org;
+  $("#openMembers").hidden = !isAdmin();
+  $("#tabDb").hidden = !can("catalog");
+  $("#tabGlobal").hidden = !can("view_global");
+  $("#mergePanel").hidden = !isOwner();
+  $("#resetPanel").hidden = !isOwner();
+  $("#addRes").hidden = !can("catalog");
+  $("#capOwnerBox").hidden = !can("edit_others");
+  $("#mOwner").hidden = !can("view_global");
+  const cur = document.querySelector('#appTabs [aria-selected="true"]');
+  if (cur && cur.hidden) showTab("mine");
+}
+async function loadOrgs() {
+  const { data, error } = await sb.from("organizations").select("id, name, created_at").order("name");
+  st.orgs = error ? [] : data || [];
+  applyRights();
+  if ($("#members").open) renderMembers();
+}
+// Compte en attente : choix de l'organisation à rejoindre.
+async function loadPendingOrgs() {
+  const { data } = await sb.from("organizations").select("id, name").order("name");
+  st.orgs = data || [];
+  const sel = $("#pOrg");
+  sel.innerHTML = '<option value="">Choisis ton organisation…</option>' + st.orgs.map(o => `<option value="${esc(o.id)}">${esc(o.name)}</option>`).join("");
+  if (st.me.org_id) sel.value = st.me.org_id;
+  const m = $("#pMsg");
+  m.textContent = st.me.org_id ? `Demande envoyée à « ${orgName(st.me.org_id)} ». Un de ses administrateurs doit la valider.`
+    : st.orgs.length ? "" : "Aucune organisation n'existe encore : contacte le propriétaire du site.";
+  m.className = "formmsg" + (st.me.org_id ? " ok" : "");
+  $("#pJoin").textContent = st.me.org_id ? "Changer de demande" : "Envoyer la demande";
+}
+$("#pJoin").addEventListener("click", async () => {
+  const v = $("#pOrg").value, m = $("#pMsg");
+  if (!v) { m.textContent = "Choisis une organisation."; m.className = "formmsg err"; return; }
+  $("#pJoin").disabled = true;
+  try { await rpc("request_organization", { p_org: v }); st.me.org_id = v; await loadPendingOrgs(); }
+  catch (err) { m.textContent = errText(err); m.className = "formmsg err"; }
+  $("#pJoin").disabled = false;
+});
 async function loadProfiles() {
-  const { data } = await sb.from("profiles").select("id, pseudo, role, created_at").order("created_at");
+  const { data } = await sb.from("profiles").select("*").order("created_at");
   st.profiles = Object.fromEntries((data || []).map(p => [p.id, p]));
   const pend = (data || []).filter(p => p.role === "pending").length;
   $("#pendingCount").textContent = pend; $("#pendingCount").hidden = !pend;
@@ -274,8 +314,9 @@ function startRealtime() {
     .on("postgres_changes", { event: "*", schema: "public", table: "legacy_stocks" }, reloadStocks)
     .on("postgres_changes", { event: "*", schema: "public", table: "locations" }, reloadStocks)
     .on("postgres_changes", { event: "*", schema: "public", table: "reference_images" }, reloadLib)
+    .on("postgres_changes", { event: "*", schema: "public", table: "organizations" }, () => { if (st.me && st.me.role !== "pending") loadOrgs(); })
     .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, payload => {
-      if (st.me && payload.new && payload.new.id === st.me.id && payload.new.role !== st.me.role) return sb.auth.getSession().then(r => enter(r.data.session));
+      if (st.me && payload.new && payload.new.id === st.me.id && rightsSig(payload.new) !== rightsSig(st.me)) return sb.auth.getSession().then(r => enter(r.data.session));
       if (st.me && st.me.role !== "pending") loadProfiles();
     })
     .subscribe();
@@ -307,7 +348,13 @@ const unitTxt = u => u ? " " + u : "";
 const locName = id => (st.locations.find(l => l.id === id) || {}).name || "Lieu inconnu";
 const who = id => (st.profiles[id] || {}).pseudo || "Membre";
 const resOf = id => st.resources.find(r => r.id === id);
-const isAdmin = () => !!(st.me && st.me.role === "admin");
+const isOwner = () => !!(st.me && st.me.is_owner);
+const isAdmin = () => !!(st.me && (st.me.is_owner || st.me.role === "admin"));
+// Droit d'un membre ; un administrateur (ou le propriétaire) les a tous.
+const can = p => !!st.me && (isAdmin() || !!st.me["can_" + p]);
+const orgName = id => (st.orgs.find(o => o.id === id) || {}).name || "";
+const sameOrg = p => !!p.org_id && p.org_id === (st.me && st.me.org_id);
+const rightsSig = p => ["role", "org_id", "is_owner", "can_view_global", "can_scan", "can_catalog", "can_edit_others"].map(k => p[k]).join("|");
 const byName = (a, b) => ((a && a.name) || "").localeCompare((b && b.name) || "");
 // Quantités par unité native : « 120 · 30 SCU » (on n'additionne jamais des objets et des SCU).
 function unitSums(rows, field = "quantity") { const m = {}; for (const r of rows) m[r.unit || ""] = num(m[r.unit || ""]) + num(r[field]); return m; }
@@ -319,7 +366,7 @@ function resCell(r, fallback) {
 }
 function memberOptions(sel, allLabel) {
   const cur = sel.value;
-  const list = Object.values(st.profiles).filter(p => p.role !== "pending").sort((a, b) => a.pseudo.localeCompare(b.pseudo));
+  const list = Object.values(st.profiles).filter(p => p.role !== "pending" && sameOrg(p)).sort((a, b) => a.pseudo.localeCompare(b.pseudo));
   sel.innerHTML = (allLabel ? `<option value="">${allLabel}</option>` : "")
     + list.map(p => `<option value="${esc(p.id)}">${esc(p.pseudo)}${st.me && p.id === st.me.id ? " (moi)" : ""}</option>`).join("");
   if ([...sel.options].some(o => o.value === cur)) sel.value = cur;
@@ -340,7 +387,7 @@ function renderPlaceLists() {
 function renderAllStocks() {
   renderPlaceLists();
   memberOptions($("#capOwner"));
-  $("#capOwnerBox").hidden = !isAdmin();
+  $("#capOwnerBox").hidden = !can("edit_others");
   renderGlobal(); renderMine(); renderLegacy();
   if (st.items.length) renderReview();
 }
@@ -464,7 +511,7 @@ function exportStocks(rows, withLegacy) {
 // ---------- mon inventaire (ou celui d'un autre membre, en lecture) ----------
 const mineOwner = () => $("#mOwner").value || (st.me && st.me.id);
 const mOpen = new Set();
-const canEditOwner = id => !!st.me && (id === st.me.id || isAdmin());
+const canEditOwner = id => !!st.me && (id === st.me.id || can("edit_others"));
 function renderMine() {
   memberOptions($("#mOwner"));
   const owner = mineOwner(), self = !!st.me && owner === st.me.id;
@@ -575,7 +622,7 @@ function renderLegacy() {
   $("#legacyBody").innerHTML = open.map(l => `<tr data-lid="${l.id}">
     <td>${resCell(resOf(l.resource_id), l.resource_name)}</td><td>${l.place_name ? esc(l.place_name) : '<span class="muted">Non précisé</span>'}</td>
     <td class="num">${qLabel(l.quality_key)}</td><td class="num">${fmt(l.quantity)}</td>
-    <td>${isAdmin() ? `<div class="acts legacy-acts"><select id="lg-who-${l.id}" aria-label="Membre"><option value="">Attribuer à…</option>${members}</select>${l.location_id ? "" : `<input type="text" id="lg-loc-${l.id}" list="placeList" placeholder="Lieu" aria-label="Lieu">`}<button type="button" data-legacy="attribute">Attribuer</button><button type="button" data-legacy="archive" title="Déjà compté dans un inventaire personnel, ou obsolète">Archiver</button></div>` : ""}</td></tr>`).join("");
+    <td>${isOwner() ? `<div class="acts legacy-acts"><select id="lg-who-${l.id}" aria-label="Membre"><option value="">Attribuer à…</option>${members}</select>${l.location_id ? "" : `<input type="text" id="lg-loc-${l.id}" list="placeList" placeholder="Lieu" aria-label="Lieu">`}<button type="button" data-legacy="attribute">Attribuer</button><button type="button" data-legacy="archive" title="Déjà compté dans un inventaire personnel, ou obsolète">Archiver</button></div>` : ""}</td></tr>`).join("");
 }
 $("#legacyBody").addEventListener("click", async e => {
   const b = e.target.closest("[data-legacy]"); if (!b) return;
@@ -702,29 +749,94 @@ function renderLog() {
 
 // ---------- membres (admin) ----------
 const roleLabel = { pending: "En attente", member: "Membre", admin: "Administrateur" };
+const PERMS = [["view_global", "Voir l'inventaire global"], ["scan", "Analyser des captures (IA)"], ["catalog", "Gérer le catalogue"], ["edit_others", "Modifier les stocks des autres"]];
 function renderMembers() {
-  const list = Object.values(st.profiles).sort((a, b) => (a.role === "pending" ? -1 : 0) - (b.role === "pending" ? -1 : 0) || a.pseudo.localeCompare(b.pseudo));
+  const owner = isOwner(), all = Object.values(st.profiles);
+  $("#orgBox").hidden = !owner;
+  if (owner) {
+    const n = id => all.filter(p => p.org_id === id).length;
+    $("#orgList").innerHTML = st.orgs.map(o => `<div class="org-row" data-org="${esc(o.id)}">
+      <input type="text" value="${esc(o.name)}" maxlength="60" aria-label="Nom de l'organisation ${esc(o.name)}">
+      <span class="muted">${n(o.id)} compte${n(o.id) > 1 ? "s" : ""}</span>
+      <button type="button" data-org-act="rename">Renommer</button>
+      ${n(o.id) ? "" : '<button type="button" class="danger" data-org-act="del">Supprimer</button>'}</div>`).join("") || '<div class="muted">Aucune organisation.</div>';
+  }
+  const gkey = p => p.role === "pending" && !p.is_owner ? "0" : "1" + (orgName(p.org_id) || "~");
+  const list = all.filter(p => owner || p.org_id === st.me.org_id)
+    .sort((x, y) => gkey(x).localeCompare(gkey(y)) || x.pseudo.localeCompare(y.pseudo));
+  const orgOpts = sel => '<option value="">Choisir l\'organisation…</option>' + st.orgs.map(o => `<option value="${esc(o.id)}"${o.id === sel ? " selected" : ""}>${esc(o.name)}</option>`).join("");
+  let last = null;
   $("#membList").innerHTML = list.map(p => {
-    const self = p.id === st.me.id;
-    return `<div class="memb-row" data-id="${esc(p.id)}">
-      <div class="who"><strong>${esc(p.pseudo)}${self ? " (toi)" : ""}</strong><span>Inscrit le ${new Date(p.created_at).toLocaleDateString("fr-FR")}</span></div>
-      ${self ? `<span class="role admin">${roleLabel[p.role]}</span>` : `<div class="row">
-        ${p.role === "pending" ? '<button class="primary" data-role="member">Valider</button>' : ""}
-        <select data-f="role" id="role-${esc(p.id)}" aria-label="Rôle de ${esc(p.pseudo)}">${Object.entries(roleLabel).map(([k, v]) => `<option value="${k}"${k === p.role ? " selected" : ""}>${v}</option>`).join("")}</select>
+    const self = p.id === st.me.id, locked = self || (p.is_owner && !owner), pend = p.role === "pending" && !p.is_owner;
+    const full = p.is_owner || p.role === "admin", k = gkey(p);
+    const head = k !== last ? `<div class="memb-group">${pend ? "Demandes en attente" : esc(orgName(p.org_id) || "Sans organisation")}</div>` : "";
+    last = k;
+    const sub = pend ? (p.org_id ? ` · demande à rejoindre ${esc(orgName(p.org_id))}` : " · n'a pas encore choisi d'organisation") : "";
+    return head + `<div class="memb-row" data-id="${esc(p.id)}">
+      <div class="who"><strong>${esc(p.pseudo)}${self ? " (toi)" : ""}</strong><span>Inscrit le ${new Date(p.created_at).toLocaleDateString("fr-FR")}${sub}</span></div>
+      ${locked ? `<span class="role admin">${p.is_owner ? "Propriétaire" : roleLabel[p.role]}</span>` : `<div class="row">
+        ${pend ? '<button type="button" class="primary" data-act="validate">Valider</button>' : ""}
+        ${owner ? `<select data-f="org" aria-label="Organisation de ${esc(p.pseudo)}">${orgOpts(p.org_id)}</select>` : ""}
+        <select data-f="role" aria-label="Rôle de ${esc(p.pseudo)}">${Object.entries(roleLabel).map(([v, l]) => `<option value="${v}"${v === p.role ? " selected" : ""}>${l}</option>`).join("")}</select>
+        <button type="button" class="danger" data-act="remove">${pend ? "Refuser" : "Retirer"}</button>
       </div>`}
+      ${pend ? "" : `<div class="perms">${PERMS.map(([pk, l]) => `<label class="perm"><input type="checkbox" data-perm="${pk}"${full || p["can_" + pk] ? " checked" : ""}${full || locked ? " disabled" : ""}>${l}</label>`).join("")}
+        ${full ? '<span class="muted perm-note">Administrateur : tous les droits</span>' : ""}</div>`}
     </div>`;
-  }).join("");
+  }).join("") || '<div class="muted" style="padding:16px 20px">Aucun membre.</div>';
 }
-async function setRole(id, role) {
-  const { error } = await sb.from("profiles").update({ role }).eq("id", id);
-  const m = $("#membMsg");
-  if (error) { m.textContent = errText(error); m.className = "formmsg err"; }
-  else { m.textContent = "Rôle mis à jour."; m.className = "formmsg ok"; await loadProfiles(); }
+function membMsg(t, ok) { const m = $("#membMsg"); m.textContent = t; m.className = "formmsg " + (ok ? "ok" : "err"); }
+async function setMember(id, patch) {
+  try { await rpc("set_member", { p_id: id, p: patch }); membMsg("Modification enregistrée.", true); }
+  catch (err) { membMsg(errText(err)); }
+  await loadProfiles();
+  renderMembers();
 }
 $("#openMembers").addEventListener("click", () => { $("#membMsg").textContent = ""; renderMembers(); $("#members").showModal(); });
 $("#closeMembers").addEventListener("click", () => $("#members").close());
-$("#membList").addEventListener("click", e => { const b = e.target.closest("button[data-role]"); if (b) setRole(b.closest(".memb-row").dataset.id, b.dataset.role); });
-$("#membList").addEventListener("change", e => { if (e.target.dataset.f === "role") setRole(e.target.closest(".memb-row").dataset.id, e.target.value); });
+$("#membList").addEventListener("click", e => {
+  const b = e.target.closest("button[data-act]"); if (!b) return;
+  const row = b.closest(".memb-row"), id = row.dataset.id, p = st.profiles[id];
+  if (b.dataset.act === "validate") {
+    const org = row.querySelector('[data-f="org"]');
+    const orgId = org ? org.value : p.org_id;
+    if (!orgId) return membMsg("Choisis d'abord l'organisation de ce membre.");
+    return setMember(id, { role: "member", org_id: orgId });
+  }
+  if (!b.classList.contains("armed")) { b.classList.add("armed"); b.textContent = "Confirmer"; return; }
+  // Retirer : le compte repasse en attente, sans organisation ; ses stocks sont conservés.
+  setMember(id, { role: "pending", org_id: null });
+});
+$("#membList").addEventListener("change", e => {
+  const row = e.target.closest(".memb-row"); if (!row) return;
+  const id = row.dataset.id, t = e.target;
+  if (t.dataset.f === "role") {
+    const org = row.querySelector('[data-f="org"]');
+    setMember(id, t.value !== "pending" && org && org.value ? { role: t.value, org_id: org.value } : { role: t.value });
+  } else if (t.dataset.f === "org") {
+    if (st.profiles[id].role === "pending") return;   // appliqué au moment de « Valider »
+    setMember(id, { org_id: t.value || null, ...(t.value ? {} : { role: "pending" }) });
+  } else if (t.dataset.perm) setMember(id, { ["can_" + t.dataset.perm]: t.checked });
+});
+// Organisations (propriétaire du site)
+$("#orgAdd").addEventListener("click", async () => {
+  const n = $("#orgName").value.trim(); if (!n) return membMsg("Indique le nom de l'organisation.");
+  try { await rpc("create_organization", { p_name: n }); $("#orgName").value = ""; membMsg(`Organisation « ${n} » créée.`, true); }
+  catch (err) { membMsg(errText(err)); }
+  await loadOrgs();
+});
+$("#orgList").addEventListener("click", async e => {
+  const b = e.target.closest("[data-org-act]"); if (!b) return;
+  const row = b.closest(".org-row"), id = row.dataset.org;
+  try {
+    if (b.dataset.orgAct === "rename") { await rpc("rename_organization", { p_id: id, p_name: row.querySelector("input").value.trim() }); membMsg("Organisation renommée.", true); }
+    else {
+      if (!b.classList.contains("armed")) { b.classList.add("armed"); b.textContent = "Confirmer"; return; }
+      await rpc("delete_organization", { p_id: id }); membMsg("Organisation supprimée.", true);
+    }
+  } catch (err) { membMsg(errText(err)); }
+  await loadOrgs();
+});
 
 // ---------- capture ----------
 const drop = $("#drop");
@@ -762,7 +874,8 @@ function renderShots() {
       <button class="tdel" data-del="${s.id}" title="Retirer cette capture" aria-label="Retirer la page ${i + 1}" ${s.status === "busy" ? "disabled" : ""}>×</button></div>`;
   }).join("");
   const p = pendingShots().length, busy = st.shots.some(s => s.status === "busy");
-  $("#analyze").disabled = !p || busy;
+  $("#analyze").disabled = !p || busy || !can("scan");
+  if (p && !can("scan")) capMsg("Tu n'as pas le droit d'analyser des captures avec l'IA : demande-le à un administrateur de ton organisation.", true);
   const retry = p && pendingShots().every(s => s.status === "error");
   $("#analyze").textContent = retry ? (p > 1 ? `Réessayer les ${p} captures en échec` : "Réessayer la capture en échec")
     : p > 1 ? `Analyser les ${p} captures` : st.items.length && p ? "Analyser la nouvelle capture" : "Analyser la capture";
@@ -1027,7 +1140,7 @@ $("#reviewBody").addEventListener("change", e => {
 
 // ---------- comparaison avec le dernier relevé, puis enregistrement transactionnel ----------
 function hideDiff() { $("#diff").hidden = true; st.diff = null; $("#forceStale").hidden = true; $("#commit").hidden = false; }
-const scanOwner = () => isAdmin() && $("#capOwner").value && $("#capOwner").value !== st.me.id ? $("#capOwner").value : null;
+const scanOwner = () => can("edit_others") && $("#capOwner").value && $("#capOwner").value !== st.me.id ? $("#capOwner").value : null;
 function detectedTerminal() {
   const votes = {};
   for (const s of st.shots) if (s.terminal && s.terminal !== "inconnu") votes[s.terminal] = (votes[s.terminal] || 0) + 1;
@@ -1170,12 +1283,12 @@ function renderImages() {
     return `<section class="imgcard">
       <div class="imgcard-h">${resCell(r)}<span class="muted">${esc(summary)}</span></div>
       ${imgs.length ? `<div class="imgrow">${imgs.map(x => {
-        const main = x.image === r.image, mine = st.me && (x.added_by === st.me.id || isAdmin());
+        const main = x.image === r.image, mine = st.me && (x.added_by === st.me.id || can("catalog"));
         return `<figure class="refimg${main ? " main" : ""}">
           <img src="${esc(x.image)}" alt="${esc(r.name)}, ${esc(TERM[x.terminal_type])}" loading="lazy">
           <figcaption><span class="tag">${esc(TERM[x.terminal_type])}</span>${main ? '<span class="tag ok">Principale</span>' : ""}
             <span class="muted">${esc(who(x.added_by))}, ${dateTxt(x.created_at)}</span></figcaption>
-          <div class="acts">${main ? "" : `<button type="button" data-lib="main" data-id="${x.id}">Principale</button>`}${mine ? `<button type="button" class="danger" data-lib="del" data-id="${x.id}">Retirer</button>` : ""}</div>
+          <div class="acts">${main || !can("catalog") ? "" : `<button type="button" data-lib="main" data-id="${x.id}">Principale</button>`}${mine ? `<button type="button" class="danger" data-lib="del" data-id="${x.id}">Retirer</button>` : ""}</div>
         </figure>`;
       }).join("")}</div>` : '<div class="muted" style="padding:4px 0 8px">Aucune image : ajoute une capture de ce caillou ci-dessus, ou depuis la vérification d\'une capture.</div>'}
     </section>`;
@@ -1460,7 +1573,8 @@ async function backupJson() {
     exported_at: new Date().toISOString(),
     resources, ...extra,
     movements: await allMovements(),
-    profiles: Object.values(st.profiles).map(p => ({ id: p.id, pseudo: p.pseudo, role: p.role, created_at: p.created_at })),
+    profiles: Object.values(st.profiles).map(p => ({ id: p.id, pseudo: p.pseudo, role: p.role, org: orgName(p.org_id), created_at: p.created_at })),
+    organizations: st.orgs,
   };
   download(`sauvegarde-registre-${today()}.json`, JSON.stringify(backup, null, 2), "application/json");
 }

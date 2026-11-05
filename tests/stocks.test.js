@@ -232,7 +232,7 @@ test("15-16. Migration : rien n'est perdu, anciens stocks à part, aucun double 
   });
   const g0 = await global();
   const lorv = (await d.query(`select id from legacy_stocks where place_name = 'Lorville' and quality_key = '1000'`)).rows[0].id;
-  await rejects(rpc(d, m, "resolve_legacy", [lorv, "attribute", m, null, ""]), /administrateurs/);
+  await rejects(rpc(d, m, "resolve_legacy", [lorv, "attribute", m, null, ""]), /propriétaire/);
   const ch = await rpc(d, a, "resolve_legacy", [lorv, "attribute", m, null, "Déclaré par Matsu"]);
   assert.equal(ch.kind, "legacy_attribution", "jamais compté comme production");
   const g1 = await global();

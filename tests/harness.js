@@ -57,11 +57,21 @@ export async function runRemaining(db, from) {
 }
 
 // Crée un compte (le premier devient admin via le trigger), puis fixe son rôle.
-export async function addUser(db, pseudo, role = "member") {
+export async function addUser(db, pseudo, role = "member", opts = {}) {
   const id = randomUUID();
   await db.query(`insert into auth.users (id, email, raw_user_meta_data) values ($1, $2, $3)`,
     [id, `${pseudo}@test.local`, JSON.stringify({ pseudo })]);
   await db.query(`update public.profiles set role = $2 where id = $1`, [id, role]);
+  // Depuis 008 : un membre validé appartient à une organisation (par défaut « Org test »).
+  const hasOrgs = (await db.query(`select to_regclass('public.organizations') is not null as ok`)).rows[0].ok;
+  if (hasOrgs && (role !== "pending" || opts.org)) {
+    const name = opts.org || "Org test";
+    await db.query(`insert into public.organizations (name) values ($1) on conflict do nothing`, [name]);
+    await db.query(`update public.profiles set org_id = (select id from public.organizations where lower(name) = lower($2)) where id = $1`, [id, name]);
+  }
+  if (hasOrgs && opts.perms) {
+    for (const [k, v] of Object.entries(opts.perms)) await db.query(`update public.profiles set ${k} = $2 where id = $1`, [id, v]);
+  }
   return id;
 }
 

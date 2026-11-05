@@ -56,8 +56,10 @@ test("Retrait : seulement par l'auteur ou un admin ; l'image principale est remp
   assert.equal(await count(res), 1);
 });
 
-test("Choix de l'image principale", async () => {
+test("Choix de l'image principale : réservé au droit « catalogue »", async () => {
   const idB = (await db.query(`select id from reference_images where image = $1`, [img("B")])).rows[0].id;
+  await rejects(rpc(db, m2, "set_primary_image", [idB]), /catalogue/);
+  await db.query(`update profiles set can_catalog = true where id = $1`, [m2]);
   await rpc(db, m2, "set_primary_image", [idB]);
   assert.equal(await primary(res), img("B"));
 });

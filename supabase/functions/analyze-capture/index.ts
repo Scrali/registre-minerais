@@ -78,8 +78,11 @@ Deno.serve(async (req) => {
     const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_ANON_KEY")!, {
       global: { headers: { Authorization: req.headers.get("Authorization") ?? "" } },
     });
-    const { data: member } = await sb.rpc("is_member");
-    if (!member) return json({ error: "Ton compte n'est pas encore validé par un administrateur." }, 403);
+    // Droit « analyser des captures » (migration 008) ; avant elle, tout membre validé.
+    const { data: allowed, error: permErr } = await sb.rpc("has_perm", { p: "scan" });
+    let ok = allowed === true;
+    if (permErr) { const { data: member } = await sb.rpc("is_member"); ok = !!member; }
+    if (!ok) return json({ error: "Tu n'as pas le droit d'analyser des captures, ou ton compte n'est pas encore validé : demande-le à un administrateur de ton organisation." }, 403);
 
     const { image, media_type, terminal_hint } = await req.json();
     if (typeof image !== "string" || !MEDIA_TYPES.includes(media_type)) {
