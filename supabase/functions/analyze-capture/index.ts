@@ -54,7 +54,7 @@ Dans ce jeu, la COULEUR et la FORME du caillou indiquent quel minerai c'est. Pou
 Attention aux teintes proches : par exemple une roche brun-gris foncé et une roche brun-rouge sont deux minerais DIFFÉRENTS. Compare les cases entre elles et donne un nom différent à chaque type de caillou distinct ; ne regroupe sous un même nom que les cases dont le caillou est vraiment identique.
 Ressources connues du registre, avec leur couleur quand elle est renseignée :
 ${known}
-${refs ? `IMAGES DE RÉFÉRENCE : avant la capture, tu as reçu ${refs} image(s) de référence, chacune précédée du nom de sa ressource. Ce sont des vignettes du caillou tel qu'il apparaît dans l'inventaire du jeu. C'est la source la plus fiable pour reconnaître un caillou : compare chaque case de la capture à TOUTES les références (teinte exacte, taches et reflets, rugosité, silhouette). Plusieurs minerais se ressemblent beaucoup (par exemple deux roches brun-rouge) : départage-les sur les détails, et choisis la référence la plus proche, pas la première qui convient à peu près.
+${refs ? `IMAGES DE RÉFÉRENCE : avant la capture, tu as reçu ${refs} image(s) de référence, chacune précédée du nom de sa ressource. Ce sont des vignettes du caillou tel qu'il apparaît dans le jeu. Une même ressource peut avoir plusieurs vues : le caillou s'affiche un peu différemment selon l'écran (inventaire personnel, interface d'un ascenseur de fret, entrepôt…), avec un éclairage, un angle ou un fond différents ; une case correspond à une ressource si elle ressemble à N'IMPORTE LAQUELLE de ses vues. C'est la source la plus fiable pour reconnaître un caillou : compare chaque case de la capture à TOUTES les références (teinte exacte, taches et reflets, rugosité, silhouette). Plusieurs minerais se ressemblent beaucoup (par exemple deux roches brun-rouge) : départage-les sur les détails, et choisis la référence la plus proche, pas la première qui convient à peu près.
 ` : ""}Pour identifier chaque lot :
 1. Si un nom est écrit et correspond à une ressource connue (même avec une orthographe, une casse ou une langue un peu différente), reprends exactement le nom connu. by = "nom".
 2. Si aucun nom n'est lisible, compare le caillou aux images de référence et aux couleurs connues, et reprends le nom de la ressource qui correspond le mieux. by = "couleur".
@@ -81,15 +81,17 @@ Deno.serve(async (req) => {
     }
     if (image.length > 7_000_000) return json({ error: "Image trop lourde (5 Mo maximum)." }, 413);
 
-    const { data: resources } = await sb.from("resources").select("name, unit, color, color_name, image").order("name");
-    // Vignette de référence de chaque ressource (enregistrée lors d'une capture précédente).
+    const { data: resources } = await sb.from("resources").select("name, unit, color, color_name, image, refs").order("name");
+    // Vignettes de référence de chaque ressource : l'image principale puis les autres vues
+    // (le même caillou peut s'afficher différemment selon l'écran du jeu). 80 images au plus.
     const PREFIX = "data:image/jpeg;base64,";
+    const isImg = (s: unknown): s is string => typeof s === "string" && s.startsWith(PREFIX);
     const refBlocks = (resources ?? [])
-      .filter((r) => typeof r.image === "string" && r.image.startsWith(PREFIX))
-      .slice(0, 40)
-      .flatMap((r) => [
-        { type: "text" as const, text: `Référence : ${r.name}` },
-        { type: "image" as const, source: { type: "base64" as const, media_type: "image/jpeg" as const, data: r.image.slice(PREFIX.length) } },
+      .flatMap((r) => [r.image, ...(Array.isArray(r.refs) ? r.refs : [])].filter(isImg).map((img, i, all) => ({ name: r.name, img, i, n: all.length })))
+      .slice(0, 80)
+      .flatMap(({ name, img, i, n }) => [
+        { type: "text" as const, text: `Référence : ${name}${n > 1 ? ` (vue ${i + 1}/${n})` : ""}` },
+        { type: "image" as const, source: { type: "base64" as const, media_type: "image/jpeg" as const, data: img.slice(PREFIX.length) } },
       ]);
     const refs = refBlocks.length / 2;
     const known = (resources ?? [])

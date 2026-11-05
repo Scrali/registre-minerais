@@ -209,3 +209,7 @@ tr.undone td:last-child{text-decoration:none}
 .pics{display:flex;gap:4px;flex:none;margin-right:8px}
 .pics .crop{margin-right:0}
 .crop.ref{width:44px;height:44px;opacity:.9;outline:2px solid var(--accent);outline-offset:-2px}
+.refgrid{display:flex;flex-wrap:wrap;gap:4px;max-width:150px}
+.refcell{position:relative}
+.refcell .rimg{margin:0}
+.refcell .tdel{position:absolute;top:-6px;right:-6px;width:18px;height:18px;min-height:0;padding:0;line-height:16px;border-radius:50%;font-size:12px}

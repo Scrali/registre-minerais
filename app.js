@@ -7,6 +7,8 @@ const okHex = h => /^#[0-9a-f]{6}$/i.test(String(h || "")) ? h : "";
 const swatch = (h, title) => okHex(h) ? `<span class="sw" style="background:${okHex(h)}"${title ? ` title="${esc(title)}"` : ""}></span>` : '<span class="sw none" title="Pas de couleur"></span>';
 
 const okImg = s => typeof s === "string" && s.startsWith("data:image/jpeg;base64,");
+// Images de référence d'une ressource : la principale puis les autres vues.
+const refsOf = r => [r && r.image, ...(r && Array.isArray(r.refs) ? r.refs : [])].filter(okImg);
 
 const cfg = window.REGISTRE_CONFIG || {};
 const configured = /^https:\/\/.+/.test(cfg.supabaseUrl || "") && cfg.supabaseKey && !/TON-PROJET|TA-CLE/.test(cfg.supabaseUrl + cfg.supabaseKey);
@@ -611,9 +613,12 @@ function renderReview() {
     const r = st.resources.find(x => x.id === it.target);
     if (!r && it.target !== "new") it.target = "new";
     // Vignette lue, à côté de l'image de référence de la ressource choisie pour comparer d'un coup d'œil.
-    const ref = r && okImg(r.image) ? `<img class="crop ref" src="${esc(r.image)}" alt="" title="Image de référence de ${esc(r.name)}">` : "";
-    const setRef = r && it.crop && r.image !== it.crop
-      ? `<br><button type="button" class="linkbtn" data-ref="${i}" title="Cette case montre bien ${esc(r.name)} : elle servira de modèle pour reconnaître ce minerai">${ref ? "Remplacer" : "Définir"} l'image de référence</button>` : "";
+    const views = r ? refsOf(r) : [];
+    const ref = views.length ? `<img class="crop ref" src="${esc(views[0])}" alt="" title="Image de référence de ${esc(r.name)}${views.length > 1 ? ` (+${views.length - 1} autre${views.length > 2 ? "s" : ""} vue${views.length > 2 ? "s" : ""})` : ""}">` : "";
+    const known = it.crop && views.includes(it.crop);
+    const setRef = r && it.crop && !known
+      ? `<br><button type="button" class="linkbtn" data-ref="${i}" data-how="add" title="Cette case montre bien ${esc(r.name)} : elle servira de modèle, en plus des autres vues (utile quand le caillou s'affiche autrement, par exemple dans un ascenseur de fret)">${views.length ? "Ajouter comme vue de référence" : "Définir l'image de référence"}</button>`
+        + (views.length ? ` · <button type="button" class="linkbtn" data-ref="${i}" data-how="main" title="Remplace l'image principale, affichée dans le stock">Image principale</button>` : "") : "";
     const pic = it.crop ? `<span class="pics"><img class="crop" src="${it.crop}" alt="Case lue sur la capture">${ref}</span>` : swatch(it.hex, it.color);
     const g = groups.get(r ? r.id : "new:" + norm(it.name));
     const before = r ? num(r.qty) : 0;
@@ -643,7 +648,20 @@ $("#reviewBody").addEventListener("click", async e => {
     const it = st.items[+rb.dataset.ref], r = st.resources.find(x => x.id === it.target);
     if (!r || !it.crop) return;
     rb.disabled = true;
-    try { await rpc("set_resource_image", { p_id: r.id, p_image: it.crop, p_replace: true }); r.image = it.crop; renderReview(); renderStock(); setStatus(""); }
+    try {
+      if (rb.dataset.how === "main") {
+        // L'ancienne image principale reste une vue de référence.
+        const old = r.image;
+        await rpc("set_resource_image", { p_id: r.id, p_image: it.crop, p_replace: true });
+        if (okImg(old)) await rpc("add_resource_ref", { p_id: r.id, p_image: old }).catch(() => {});
+        r.refs = [...(r.refs || []).filter(x => x !== it.crop), ...(okImg(old) ? [old] : [])].slice(-6);
+        r.image = it.crop;
+      } else {
+        await rpc("add_resource_ref", { p_id: r.id, p_image: it.crop });
+        if (!okImg(r.image)) r.image = it.crop; else r.refs = [...(r.refs || []), it.crop].slice(-6);
+      }
+      renderReview(); renderStock(); setStatus("");
+    }
     catch (err) { setStatus(errText(err)); rb.disabled = false; }
     return;
   }
@@ -721,7 +739,7 @@ function dbRow(r) {
   const txt = placesToText(placesOf(r));
   return `<tr data-id="${esc(r.id)}">
     <td><input type="color" class="e-color" id="e-color-${esc(r.id)}" value="${okHex(r.color) || "#888888"}" data-had="${okHex(r.color) ? 1 : ""}" aria-label="Couleur de ${esc(r.name)}">
-        ${r.image ? `<div class="dbimg"><img class="rimg" src="${esc(r.image)}" alt=""><button type="button" class="linkbtn" data-act="noimg" title="La prochaine capture enregistrée fournira une nouvelle image">Effacer l'image</button></div>` : ""}</td>
+        ${refsOf(r).length ? `<div class="dbimg"><div class="refgrid">${refsOf(r).map((src, k) => `<span class="refcell"><img class="rimg" src="${esc(src)}" alt="" title="${k ? "Vue de référence " + (k + 1) : "Image principale"}"><button type="button" class="tdel" data-act="noimg" data-k="${k - 1}" title="Retirer cette image de référence" aria-label="Retirer cette image">×</button></span>`).join("")}</div><span class="muted" style="font-size:11px">${refsOf(r).length} image${refsOf(r).length > 1 ? "s" : ""} de référence</span></div>` : ""}</td>
     <td><input type="text" class="e-name" id="e-name-${esc(r.id)}" value="${esc(r.name)}" maxlength="80" aria-label="Nom">
         <input type="text" class="e-colorname" id="e-cn-${esc(r.id)}" value="${esc(r.color_name)}" placeholder="Description de la couleur" aria-label="Description de la couleur"></td>
     <td><input type="text" class="e-cat" id="e-cat-${esc(r.id)}" value="${esc(r.category)}" list="catList" aria-label="Catégorie"></td>
@@ -771,7 +789,13 @@ $("#dbBody").addEventListener("click", async e => {
   if (!r) return;
   if (b.dataset.act === "noimg") {
     b.disabled = true;
-    try { await rpc("set_resource_image", { p_id: id, p_image: "", p_replace: true }); r.image = ""; renderDb(); renderStock(); setStatus(""); }
+    const k = Number(b.dataset.k);
+    try {
+      await rpc("remove_resource_ref", { p_id: id, p_index: k });
+      const rest = Array.isArray(r.refs) ? r.refs.slice() : [];
+      if (k < 0) { r.image = rest.shift() || ""; r.refs = rest; } else { rest.splice(k, 1); r.refs = rest; }
+      renderDb(); renderStock(); setStatus("");
+    }
     catch (err) { setStatus(errText(err)); b.disabled = false; }
     return;
   }
