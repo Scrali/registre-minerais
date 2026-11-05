@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="style.css?v=22">
+<link rel="stylesheet" href="style.css?v=23">
 </head>
 <body>
 
@@ -146,6 +146,15 @@
               <option value="done">Ordre terminé</option>
             </select>
           </label>
+          <div>
+            <div style="font-size:13px;color:var(--muted);margin-bottom:6px">Que fait cet enregistrement ?</div>
+            <div class="seg" role="radiogroup">
+              <label title="La quantité lue remplace celle enregistrée : on enregistre l'écart (relevé d'inventaire)"><input type="radio" name="capMode" value="update" checked> Mettre à jour</label>
+              <label title="Chaque lot lu s'ajoute au stock déjà enregistré dans ce lieu (ordre de raffinerie, dépôt…)"><input type="radio" name="capMode" value="add"> Ajouter</label>
+              <label title="Ce qui a été récolté pendant le run s'ajoute au stock, compté comme production minière"><input type="radio" name="capMode" value="run"> Fin de run</label>
+            </div>
+            <span class="muted" style="font-size:12px" id="capModeHint"></span>
+          </div>
           <div id="capCovBox">
             <div style="font-size:13px;color:var(--muted);margin-bottom:6px">Les captures montrent…</div>
             <div class="seg" role="radiogroup">
@@ -569,8 +578,8 @@
 </dialog>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-<script src="config.js?v=22"></script>
-<script src="scanlogic.js?v=22"></script>
-<script src="app.js?v=22"></script>
+<script src="config.js?v=23"></script>
+<script src="scanlogic.js?v=23"></script>
+<script src="app.js?v=23"></script>
 </body>
 </html>
