@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="style.css?v=14">
+<link rel="stylesheet" href="style.css?v=15">
 </head>
 <body>
 
@@ -91,6 +91,7 @@
 
   <nav class="apptabs" id="appTabs" role="tablist">
     <button type="button" role="tab" data-tab="mine" aria-selected="true">Mon inventaire</button>
+    <button type="button" role="tab" data-tab="req" aria-selected="false" id="tabReq" hidden>Demandes<span class="pending-count" id="reqCount" hidden></span></button>
     <button type="button" role="tab" data-tab="global" aria-selected="false" id="tabGlobal">Inventaire global</button>
     <button type="button" role="tab" data-tab="stats" aria-selected="false">Contributions</button>
     <button type="button" role="tab" data-tab="img" aria-selected="false" id="tabImg" hidden>Images</button>
@@ -223,6 +224,56 @@
       <div class="empty" id="myMovesEmpty"><span>Les variations constatées, dépôts et retraits apparaîtront ici.</span></div>
     </aside>
   </div>
+  </div>
+
+  <!-- ===== Demandes ===== -->
+  <div class="view" id="reqView" hidden>
+    <section class="panel">
+      <div class="panel-h">
+        <div>
+          <h2 id="rqTitle">Nouvelle demande</h2>
+          <div class="muted" style="font-size:14px">Indique ce dont tu as besoin : les membres de ton organisation la voient, et l'un d'eux peut s'en occuper.</div>
+        </div>
+      </div>
+      <form class="panel-b moveform" id="rqForm" style="border-top:0">
+        <div class="moverow">
+          <label>Ressource<input type="text" id="rqRes" list="resList" maxlength="80" required autocomplete="off" placeholder="ex. Quantanium"></label>
+          <label>Quantité<input type="number" id="rqQty" min="0" step="any" required></label>
+          <label>Unité<input type="text" id="rqUnit" list="unitList" maxlength="20" placeholder="SCU, objets…"></label>
+          <label>Qualité minimale<input type="number" id="rqQ" min="0" max="1000" step="1" placeholder="aucune"></label>
+          <label>Livrer à<input type="text" id="rqPlace" list="placeList" maxlength="80" autocomplete="off" placeholder="facultatif"></label>
+          <label>Pour le<input type="date" id="rqBy"></label>
+        </div>
+        <label>Note<input type="text" id="rqNote" maxlength="500" placeholder="ex. pour un raffinage, contact sur Discord…"></label>
+        <div class="row">
+          <label class="perm"><input type="checkbox" id="rqUrgent"> Urgent</label>
+          <button class="primary" type="submit" id="rqGo">Publier la demande</button>
+          <button type="button" id="rqCancelEdit" hidden>Annuler la modification</button>
+          <span class="formmsg" id="rqMsg"></span>
+        </div>
+      </form>
+    </section>
+    <section class="panel">
+      <div class="panel-h">
+        <h2>Demandes de l'organisation</h2>
+        <div class="filters">
+          <select id="rqFilter" aria-label="Filtrer les demandes">
+            <option value="active">En cours (ouvertes et prises en charge)</option>
+            <option value="mine">Mes demandes</option>
+            <option value="taken">Celles dont je m'occupe</option>
+            <option value="closed">Livrées ou annulées</option>
+            <option value="all">Toutes</option>
+          </select>
+        </div>
+      </div>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Ressource</th><th>Quantité</th><th>Livrer à</th><th>Demandé par</th><th>Statut</th><th>Disponible chez</th><th></th></tr></thead>
+          <tbody id="rqBody"></tbody>
+        </table>
+      </div>
+      <div class="empty" id="rqEmpty"><strong>Aucune demande</strong><span>Les besoins des membres de ton organisation apparaîtront ici.</span></div>
+    </section>
   </div>
 
   <!-- ===== Inventaire global ===== -->
@@ -472,6 +523,7 @@
     </label>
     <datalist id="catList"></datalist>
     <datalist id="placeList"></datalist>
+    <datalist id="resList"></datalist>
     <datalist id="unitList"><option value="SCU"><option value="cSCU"><option value="µSCU"></datalist>
     <div class="dlg-actions">
       <button type="button" class="danger" id="fDelete" hidden>Supprimer</button>
@@ -501,8 +553,8 @@
 </dialog>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-<script src="config.js?v=14"></script>
-<script src="scanlogic.js?v=14"></script>
-<script src="app.js?v=14"></script>
+<script src="config.js?v=15"></script>
+<script src="scanlogic.js?v=15"></script>
+<script src="app.js?v=15"></script>
 </body>
 </html>

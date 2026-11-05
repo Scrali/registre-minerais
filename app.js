@@ -22,7 +22,7 @@ const sb = configured ? window.supabase.createClient(cfg.supabaseUrl, cfg.supaba
 
 const st = { me: null, profiles: {}, orgs: [], resources: [], moves: [], shots: [], items: [], channel: null, recovering: false,
   stocks: [], locations: [], legacy: [], scansMeta: [], myMoves: [], reasons: {}, diff: null, scanKey: null, v2: false,
-  refImages: [], libReady: false };
+  refImages: [], libReady: false, requests: [], reqReady: false, rqEdit: null };
 
 function show(view) {
   for (const id of ["authView", "recoveryView", "pendingView", "configView", "appView"]) $("#" + id).hidden = id !== view;
@@ -191,7 +191,7 @@ async function enter(session) {
   $("#meName").textContent = me.pseudo;
   applyRights();
   show("appView");
-  await Promise.all([loadOrgs(), loadProfiles(), loadResources(), loadMoves(), loadStocks(), loadRefImages()]);
+  await Promise.all([loadOrgs(), loadProfiles(), loadResources(), loadMoves(), loadStocks(), loadRefImages(), loadRequests()]);
   loadMyMoves();
 }
 
@@ -256,6 +256,7 @@ async function loadResources() {
   setStatus("");
   st.resources = data || [];
   renderAllStocks();
+  $("#resList").innerHTML = st.resources.map(r => `<option value="${esc(r.name)}">`).join("");
   if (!$("#dbView").hidden) renderDb();
 }
 async function loadMoves() {
@@ -306,6 +307,7 @@ async function loadRefImages() {
   if (st.items.length) renderReview();
 }
 const reloadRes = debounce(loadResources, 250), reloadStocks = debounce(loadStocks, 250), reloadLib = debounce(loadRefImages, 250);
+const reloadReq = debounce(() => loadRequests(), 250);
 const reloadMoves = debounce(() => { loadMoves(); loadMyMoves(); }, 250);
 function startRealtime() {
   if (st.channel) return;
@@ -316,6 +318,7 @@ function startRealtime() {
     .on("postgres_changes", { event: "*", schema: "public", table: "legacy_stocks" }, reloadStocks)
     .on("postgres_changes", { event: "*", schema: "public", table: "locations" }, reloadStocks)
     .on("postgres_changes", { event: "*", schema: "public", table: "reference_images" }, reloadLib)
+    .on("postgres_changes", { event: "*", schema: "public", table: "requests" }, reloadReq)
     .on("postgres_changes", { event: "*", schema: "public", table: "organizations" }, () => { if (st.me && st.me.role !== "pending") loadOrgs(); })
     .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, payload => {
       if (st.me && payload.new && payload.new.id === st.me.id && rightsSig(payload.new) !== rightsSig(st.me)) return sb.auth.getSession().then(r => enter(r.data.session));
@@ -391,6 +394,7 @@ function renderAllStocks() {
   memberOptions($("#capOwner"));
   $("#capOwnerBox").hidden = !can("edit_others");
   renderGlobal(); renderMine(); renderLegacy();
+  if (!$("#reqView").hidden) renderRequests();
   if (st.items.length) renderReview();
 }
 
@@ -1358,13 +1362,117 @@ $("#iAdd").addEventListener("click", async () => {
   } catch (err) { m.textContent = errText(err); m.className = "formmsg err"; pendingImgs = pendingImgs.slice(ok); renderPending(); }
 });
 
+// ---------- onglet Demandes (migration 009) ----------
+const RQ_STATUS = { open: ["Ouverte", "low"], in_progress: ["Prise en charge", "warn"], done: ["Livrée", "ok"], cancelled: ["Annulée", "none"] };
+async function loadRequests() {
+  try { st.requests = await fetchAll("requests", "*", "id"); st.reqReady = true; }
+  catch (_) { st.requests = []; st.reqReady = false; }   // migration 009 pas encore exécutée
+  $("#tabReq").hidden = !st.reqReady;
+  const open = st.requests.filter(r => r.status === "open").length;
+  $("#reqCount").textContent = open; $("#reqCount").hidden = !open;
+  if (!$("#reqView").hidden) renderRequests();
+}
+// Stocks visibles qui correspondent à la demande (même ressource, qualité suffisante), hors ceux du demandeur.
+function rqMatches(r) {
+  if (!r.resource_id) return [];
+  return st.stocks.filter(s => s.resource_id === r.resource_id && num(s.quantity) > 0 && s.user_id !== r.requester_id
+    && (r.min_quality == null || (s.quality_key !== "-" && +s.quality_key >= r.min_quality)))
+    .sort((a, b) => num(b.quantity) - num(a.quantity));
+}
+function rqRow(r) {
+  const me = st.me.id, mine = r.requester_id === me, taker = r.taken_by === me;
+  const adm = isOwner() || (isAdmin() && r.org_id === st.me.org_id);
+  const res = resOf(r.resource_id);
+  const [lab, cls] = RQ_STATUS[r.status] || [r.status, "none"];
+  const ms = r.status === "open" || r.status === "in_progress" ? rqMatches(r) : [];
+  const avail = ms.length ? `${ms.slice(0, 3).map(s => `<div style="font-size:13px">${esc(who(s.user_id))} · ${esc(locName(s.location_id))} · ${qLabel(s.quality_key)} ×${fmt(s.quantity)}${unitTxt(s.unit)}</div>`).join("")}${ms.length > 3 ? `<div class="muted" style="font-size:12px">+${ms.length - 3} autre${ms.length > 4 ? "s" : ""}</div>` : ""}`
+    : r.status === "open" || r.status === "in_progress" ? '<span class="muted" style="font-size:13px">' + (r.resource_id ? "Personne (dans ce que tu peux voir)" : "Ressource hors catalogue") + "</span>" : "";
+  const b = (act, txt, extra = "") => `<button type="button" data-act="${act}" data-id="${r.id}"${extra}>${txt}</button>`;
+  const acts = [];
+  if (r.status === "open") acts.push(b("in_progress", "Je m'en occupe", ' class="primary"'));
+  if (r.status === "in_progress" && (taker || mine || adm)) acts.push(b("open", taker ? "Je ne peux plus" : "Remettre ouverte"));
+  if ((r.status === "open" || r.status === "in_progress") && (mine || adm || taker)) acts.push(b("done", "Livrée"));
+  if ((r.status === "open" || r.status === "in_progress") && mine) acts.push(b("edit", "Modifier"));
+  if ((r.status === "open" || r.status === "in_progress") && (mine || adm)) acts.push(b("cancelled", "Annuler", ' class="danger"'));
+  if ((r.status === "done" || r.status === "cancelled") && (mine || adm)) acts.push(b("open", "Rouvrir"));
+  const meta = [r.needed_by ? "pour le " + new Date(r.needed_by + "T12:00").toLocaleDateString("fr-FR") : "", r.note].filter(Boolean);
+  return `<tr>
+    <td>${res ? resCell(res) : `<span class="res-name">${esc(r.resource_name)}</span>`}${r.priority === "urgent" ? ' <span class="pill low">Urgent</span>' : ""}
+      ${meta.length ? `<div class="muted" style="font-size:13px;margin-top:4px">${esc(meta.join(" · "))}</div>` : ""}</td>
+    <td class="num">${fmt(r.quantity)}${unitTxt(esc(r.unit))}${r.min_quality != null ? `<div class="muted" style="font-size:12px">Q${r.min_quality} min.</div>` : ""}</td>
+    <td>${esc(r.location) || '<span class="muted">–</span>'}</td>
+    <td>${esc(who(r.requester_id))}${mine ? ' <span class="muted">(moi)</span>' : ""}<div class="muted" style="font-size:12px">${dateTxt(r.created_at)}</div></td>
+    <td><span class="pill ${cls}">${lab}</span>${r.taken_by ? `<div class="muted" style="font-size:12px;margin-top:4px">par ${esc(who(r.taken_by))}</div>` : ""}</td>
+    <td>${avail}</td>
+    <td><div class="acts">${acts.join("")}</div></td>
+  </tr>`;
+}
+function renderRequests() {
+  if (!st.me) return;
+  const f = $("#rqFilter").value, me = st.me.id;
+  const keep = {
+    active: r => r.status === "open" || r.status === "in_progress",
+    mine: r => r.requester_id === me, taken: r => r.taken_by === me,
+    closed: r => r.status === "done" || r.status === "cancelled", all: () => true,
+  }[f] || (() => true);
+  const rank = r => (r.status === "open" ? 0 : r.status === "in_progress" ? 1 : 2) * 2 + (r.priority === "urgent" ? 0 : 1);
+  const rows = st.requests.filter(r => r.org_id === st.me.org_id || isOwner()).filter(keep)
+    .sort((a, b) => rank(a) - rank(b) || String(b.created_at).localeCompare(String(a.created_at)));
+  $("#rqBody").innerHTML = rows.map(rqRow).join("");
+  $("#rqEmpty").hidden = rows.length > 0;
+}
+$("#rqFilter").addEventListener("change", renderRequests);
+function rqResetForm() {
+  st.rqEdit = null; $("#rqForm").reset();
+  $("#rqTitle").textContent = "Nouvelle demande"; $("#rqGo").textContent = "Publier la demande"; $("#rqCancelEdit").hidden = true;
+}
+$("#rqCancelEdit").addEventListener("click", () => { rqResetForm(); $("#rqMsg").textContent = ""; });
+$("#rqForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  const m = $("#rqMsg"), name = $("#rqRes").value.trim();
+  const res = st.resources.find(r => norm(r.name) === norm(name));
+  const p = { resource_id: res ? res.id : "", resource_name: name, quantity: num($("#rqQty").value), unit: $("#rqUnit").value.trim(),
+    min_quality: $("#rqQ").value === "" ? "" : Math.round(num($("#rqQ").value)), location: $("#rqPlace").value.trim(),
+    needed_by: $("#rqBy").value, priority: $("#rqUrgent").checked ? "urgent" : "normal", note: $("#rqNote").value.trim() };
+  $("#rqGo").disabled = true;
+  try {
+    if (st.rqEdit) await rpc("update_request", { p_id: st.rqEdit, p });
+    else await rpc("create_request", { p });
+    m.textContent = st.rqEdit ? "Demande modifiée." : `Demande publiée${res ? "" : " (ressource hors catalogue)"}.`; m.className = "formmsg ok";
+    rqResetForm(); await loadRequests();
+  } catch (err) { m.textContent = errText(err); m.className = "formmsg err"; }
+  $("#rqGo").disabled = false;
+});
+$("#rqBody").addEventListener("click", async e => {
+  const btn = e.target.closest("button[data-act]"); if (!btn) return;
+  const r = st.requests.find(x => String(x.id) === btn.dataset.id); if (!r) return;
+  if (btn.dataset.act === "edit") {
+    st.rqEdit = r.id;
+    $("#rqRes").value = (resOf(r.resource_id) || {}).name || r.resource_name; $("#rqQty").value = num(r.quantity); $("#rqUnit").value = r.unit;
+    $("#rqQ").value = r.min_quality ?? ""; $("#rqPlace").value = r.location; $("#rqBy").value = r.needed_by || "";
+    $("#rqUrgent").checked = r.priority === "urgent"; $("#rqNote").value = r.note;
+    $("#rqTitle").textContent = "Modifier la demande"; $("#rqGo").textContent = "Enregistrer"; $("#rqCancelEdit").hidden = false;
+    $("#rqMsg").textContent = ""; $("#rqForm").scrollIntoView({ behavior: "smooth", block: "start" }); $("#rqRes").focus();
+    return;
+  }
+  if (btn.dataset.act === "cancelled" && btn.dataset.armed !== "1") {
+    btn.dataset.armed = "1"; btn.textContent = "Confirmer l'annulation";
+    setTimeout(() => { if (btn.isConnected) { btn.dataset.armed = ""; btn.textContent = "Annuler"; } }, 4000);
+    return;
+  }
+  btn.disabled = true;
+  try { await rpc("set_request_status", { p_id: r.id, p_status: btn.dataset.act }); await loadRequests(); }
+  catch (err) { setStatus(errText(err)); btn.disabled = false; }
+});
+
 // ---------- onglet Base de données (administrateurs) ----------
 function showTab(tab) {
   document.querySelectorAll("#appTabs button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
-  for (const v of ["mine", "global", "stats", "img", "db"]) $("#" + v + "View").hidden = tab !== v;
+  for (const v of ["mine", "req", "global", "stats", "img", "db"]) $("#" + v + "View").hidden = tab !== v;
   if (tab === "img") renderImages();
   if (tab === "db") { renderDb(); if (!hist.loaded) loadHistory(true); }
   if (tab === "stats") loadStats();
+  if (tab === "req") renderRequests();
 }
 $("#appTabs").addEventListener("click", e => { const b = e.target.closest("button[data-tab]"); if (b) showTab(b.dataset.tab); });
 

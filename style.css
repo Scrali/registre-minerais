@@ -118,6 +118,7 @@ textarea{font:14px/1.5 var(--f-mono);color:inherit;background:var(--bg);border:1
 .pill::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
 .pill.ok{color:var(--ok);background:color-mix(in srgb,var(--ok) 14%,transparent)}
 .pill.low{color:var(--crit);background:color-mix(in srgb,var(--crit) 14%,transparent)}
+.pill.warn{color:var(--warn);background:color-mix(in srgb,var(--warn) 14%,transparent)}
 .pill.none{color:var(--muted);background:var(--soft)}
 tr.low .gauge i{background:var(--crit)}
 .quick{display:flex;gap:4px;align-items:center;flex-wrap:nowrap}
