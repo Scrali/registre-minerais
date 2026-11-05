@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="style.css?v=20">
+<link rel="stylesheet" href="style.css?v=21">
 </head>
 <body>
 
@@ -136,8 +136,14 @@
               <option value="inventaire">Inventaire personnel</option>
               <option value="ascenseur_fret">Ascenseur de fret</option>
               <option value="asop">Terminal ASOP</option>
-              <option value="raffinerie">Raffinerie (ordre de travail)</option>
+              <option value="raffinerie">Raffinerie</option>
               <option value="autre">Autre écran</option>
+            </select>
+          </label>
+          <label id="capRefBox" hidden>Ordre de raffinerie à lire
+            <select id="capRefPanel">
+              <option value="setup">Ordre de travail (mise en place)</option>
+              <option value="done">Ordre terminé</option>
             </select>
           </label>
           <div>
@@ -392,7 +398,7 @@
               <option value="inventaire">Inventaire personnel</option>
               <option value="ascenseur_fret">Ascenseur de fret</option>
               <option value="asop">Terminal ASOP</option>
-              <option value="raffinerie">Raffinerie (ordre de travail)</option>
+              <option value="raffinerie">Raffinerie</option>
               <option value="autre">Autre écran</option>
               <option value="inconnu">Non précisé</option>
             </select>
@@ -412,7 +418,7 @@
             <option value="inventaire">Inventaire personnel</option>
             <option value="ascenseur_fret">Ascenseur de fret</option>
               <option value="asop">Terminal ASOP</option>
-              <option value="raffinerie">Raffinerie (ordre de travail)</option>
+              <option value="raffinerie">Raffinerie</option>
             <option value="autre">Autre écran</option>
             <option value="inconnu">Non précisé</option>
           </select>
@@ -563,8 +569,8 @@
 </dialog>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-<script src="config.js?v=20"></script>
-<script src="scanlogic.js?v=20"></script>
-<script src="app.js?v=20"></script>
+<script src="config.js?v=21"></script>
+<script src="scanlogic.js?v=21"></script>
+<script src="app.js?v=21"></script>
 </body>
 </html>

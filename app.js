@@ -963,7 +963,10 @@ document.querySelectorAll("input[name=capCov]").forEach(r => r.addEventListener(
     : "Seuls les minerais visibles sont mis à jour ; les autres ne changent pas.";
   hideDiff();
 }));
-["#capOwner", "#capTerminal", "#capPlace"].forEach(sel => $(sel).addEventListener("change", hideDiff));
+["#capOwner", "#capTerminal", "#capPlace", "#capRefPanel"].forEach(sel => $(sel).addEventListener("change", hideDiff));
+// Raffinerie : on choisit quel ordre lire (celui en préparation ou un ordre terminé).
+const refPanel = () => $("#capRefPanel").value === "done" ? "done" : "setup";
+$("#capTerminal").addEventListener("change", () => { $("#capRefBox").hidden = $("#capTerminal").value !== "raffinerie"; });
 
 // Réduit l'image (2000 px max) pour limiter le coût d'analyse et le temps d'envoi.
 async function toBase64Jpeg(file) {
@@ -977,7 +980,7 @@ async function toBase64Jpeg(file) {
 
 async function analyzeShot(s) {
   const image = await toBase64Jpeg(s.file);
-  const { data, error } = await sb.functions.invoke("analyze-capture", { body: { image, media_type: "image/jpeg", terminal_hint: $("#capTerminal").value || null } });
+  const { data, error } = await sb.functions.invoke("analyze-capture", { body: { image, media_type: "image/jpeg", terminal_hint: $("#capTerminal").value || null, refinery_panel: refPanel() } });
   if (error) {
     let msg = "L'analyse a échoué. Réessaie dans un instant.";
     try { msg = (await error.context.json()).error || msg; } catch (_) {}
