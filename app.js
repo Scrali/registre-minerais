@@ -346,6 +346,11 @@ function renderAllStocks() {
 }
 
 // ---------- détail d'un minerai : qualités à sélectionner, puis qui la possède et où ----------
+// Pseudos des détenteurs : « Matsu89, JoueurB » ; au-delà de max, « Matsu89, JoueurB +3 ».
+function names(ss, max) {
+  const l = [...new Set(ss.map(s => who(s.user_id)))].sort((a, b) => a.localeCompare(b));
+  return max && l.length > max ? l.slice(0, max).join(", ") + " +" + (l.length - max) : l.join(", ");
+}
 const qSel = new Map();   // "portée:ressource" -> qualités sélectionnées (aucune = toutes)
 function oreDetail(scope, id, ss, span, { withOwner = false, canEdit = false } = {}) {
   const byQ = new Map();
@@ -356,7 +361,7 @@ function oreDetail(scope, id, ss, span, { withOwner = false, canEdit = false } =
   const picks = ks.map(k => {
     const g = byQ.get(k), on = sel.has(k), n = new Set(g.map(s => s.user_id)).size;
     return `<button type="button" class="qpick${on ? " on" : ""}${qVal(k) >= 700 ? " hi" : ""}" ${attrs} data-q="${esc(k)}" aria-pressed="${on}">`
-      + `<b>${qLabel(k)}</b><span>${esc(sumsText(unitSums(g)))}</span>${withOwner ? `<small>${n} membre${n > 1 ? "s" : ""}</small>` : ""}</button>`;
+      + `<b>${qLabel(k)}</b><span>${esc(sumsText(unitSums(g)))}</span>${withOwner ? `<small title="${esc(names(g))}">${esc(names(g, 2))}</small>` : ""}</button>`;
   }).join("");
   const rows = ss.filter(s => !sel.size || sel.has(s.quality_key)).sort((a, b) => qVal(b.quality_key) - qVal(a.quality_key)
     || (withOwner ? who(a.user_id).localeCompare(who(b.user_id)) : 0) || locName(a.location_id).localeCompare(locName(b.location_id)));
@@ -434,7 +439,7 @@ function renderGlobal() {
       <td>${resCell(r)}${r && r.category ? `<span class="chip">${esc(r.category)}</span>` : ""}${isLowRes ? ' <span class="pill low">Sous le seuil</span>' : ""}</td>
       <td><div class="qty">${esc(sumsText(unitSums(ss)))}</div></td>
       <td>${aq == null ? '<span class="muted">–</span>' : `<div class="qual">Q moy. ${aq}</div>`}${lotChips(lots)}</td>
-      <td>${owners} membre${owners > 1 ? "s" : ""}<div class="colordesc">${places} lieu${places > 1 ? "x" : ""}</div></td>
+      <td><span title="${esc(names(ss))}">${esc(names(ss, 3))}</span><div class="colordesc">${places} lieu${places > 1 ? "x" : ""}</div></td>
       <td><button type="button" aria-expanded="${open}">${open ? "Masquer" : "Qualités"}</button></td></tr>${detail}`;
   }).join("");
 }
@@ -485,7 +490,7 @@ function renderMine() {
       <td>${aq == null ? "" : `<div class="qual">Q moy. ${aq}</div>`}${lotChips(lots)}</td>
       <td class="num"><strong>${esc(sumsText(unitSums(ss)))}</strong></td><td class="muted">${dateTxt(upd)}</td>
       <td><button type="button" aria-expanded="${open}">${open ? "Masquer" : "Qualités"}</button></td></tr>`
-      + (open ? oreDetail("m" + owner, id, ss, 6, { canEdit }) : "");
+      + (open ? oreDetail("m" + owner, id, ss, 6, { canEdit, withOwner: true }) : "");
   }).join("");
   // Date du dernier relevé fiable, par lieu.
   const last = new Map();
