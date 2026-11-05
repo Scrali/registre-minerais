@@ -345,6 +345,46 @@ function renderAllStocks() {
   if (st.items.length) renderReview();
 }
 
+// ---------- détail d'un minerai : qualités à sélectionner, puis qui la possède et où ----------
+const qSel = new Map();   // "portée:ressource" -> qualités sélectionnées (aucune = toutes)
+function oreDetail(scope, id, ss, span, { withOwner = false, canEdit = false } = {}) {
+  const byQ = new Map();
+  for (const s of ss) { if (!byQ.has(s.quality_key)) byQ.set(s.quality_key, []); byQ.get(s.quality_key).push(s); }
+  const ks = [...byQ.keys()].sort(byQdesc);
+  const sel = new Set([...(qSel.get(scope + ":" + id) || [])].filter(k => byQ.has(k)));
+  const attrs = `data-scope="${scope}" data-id="${esc(id)}"`;
+  const picks = ks.map(k => {
+    const g = byQ.get(k), on = sel.has(k), n = new Set(g.map(s => s.user_id)).size;
+    return `<button type="button" class="qpick${on ? " on" : ""}${qVal(k) >= 700 ? " hi" : ""}" ${attrs} data-q="${esc(k)}" aria-pressed="${on}">`
+      + `<b>${qLabel(k)}</b><span>${esc(sumsText(unitSums(g)))}</span>${withOwner ? `<small>${n} membre${n > 1 ? "s" : ""}</small>` : ""}</button>`;
+  }).join("");
+  const rows = ss.filter(s => !sel.size || sel.has(s.quality_key)).sort((a, b) => qVal(b.quality_key) - qVal(a.quality_key)
+    || (withOwner ? who(a.user_id).localeCompare(who(b.user_id)) : 0) || locName(a.location_id).localeCompare(locName(b.location_id)));
+  const head = `<th>Qualité</th>${withOwner ? "<th>Membre</th>" : ""}<th>Lieu</th><th>Quantité</th><th>Mis à jour</th>${canEdit ? "<th></th>" : ""}`;
+  const body = rows.map(s => `<tr><td class="num">${qLabel(s.quality_key)}</td>${withOwner ? `<td>${esc(who(s.user_id))}</td>` : ""}`
+    + `<td>${esc(locName(s.location_id))}</td><td class="num"><strong>${fmt(s.quantity)}</strong>${esc(unitTxt(s.unit))}</td><td class="muted">${dateTxt(s.updated_at)}</td>`
+    + `${canEdit ? `<td><button type="button" data-use="${s.id}">Mouvement</button></td>` : ""}</tr>`).join("");
+  const hint = sel.size ? `${sel.size} qualité${sel.size > 1 ? "s" : ""} sélectionnée${sel.size > 1 ? "s" : ""} · <button type="button" class="linkbtn" ${attrs} data-q="*">Tout afficher</button>`
+    : `${ks.length} qualité${ks.length > 1 ? "s" : ""} · clique sur une ou plusieurs qualités pour voir ${withOwner ? "qui la possède et où" : "où elle se trouve"}`;
+  return `<tr class="detail"><td colspan="${span}"><div class="qpicks">${picks}</div><div class="muted qhint">${hint}</div>`
+    + `<table class="sub"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></td></tr>`;
+}
+// Clic sur une qualité (sélection multiple) ou sur la ligne d'un minerai (ouvre / ferme).
+function oreClicks(tbody, open, rerender) {
+  tbody.addEventListener("click", e => {
+    const q = e.target.closest("[data-q]");
+    if (q) {
+      const key = q.dataset.scope + ":" + q.dataset.id, sel = qSel.get(key) || new Set();
+      if (q.dataset.q === "*") sel.clear(); else if (sel.has(q.dataset.q)) sel.delete(q.dataset.q); else sel.add(q.dataset.q);
+      qSel.set(key, sel); rerender(); return;
+    }
+    if (e.target.closest("[data-use], a, input, select")) return;
+    const row = e.target.closest("[data-open]"); if (!row) return;
+    const id = row.dataset.open; if (open.has(id)) open.delete(id); else open.add(id);
+    rerender();
+  });
+}
+
 // ---------- inventaire global : somme des stocks personnels, jamais des anciens stocks ----------
 const gOpen = new Set();
 function stocksFiltered() {
@@ -389,23 +429,16 @@ function renderGlobal() {
     const lots = {}; for (const s of ss) lots[s.quality_key] = num(lots[s.quality_key]) + num(s.quantity);
     const aq = avgQ(lots), owners = new Set(ss.map(s => s.user_id)).size, places = new Set(ss.map(s => s.location_id)).size;
     const isLowRes = r && r.threshold > 0 && num(totalBy[id]) < r.threshold, open = gOpen.has(id);
-    const detail = open ? `<tr class="detail"><td colspan="5"><table class="sub"><thead><tr><th>Membre</th><th>Lieu</th><th>Qualité</th><th>Quantité</th><th>Mis à jour</th></tr></thead><tbody>${
-      ss.slice().sort((a, b) => who(a.user_id).localeCompare(who(b.user_id)) || locName(a.location_id).localeCompare(locName(b.location_id)) || qVal(b.quality_key) - qVal(a.quality_key))
-        .map(s => `<tr><td>${esc(who(s.user_id))}</td><td>${esc(locName(s.location_id))}</td><td class="num">${qLabel(s.quality_key)}</td><td class="num">${fmt(s.quantity)}${esc(unitTxt(s.unit))}</td><td class="muted">${dateTxt(s.updated_at)}</td></tr>`).join("")
-    }</tbody></table></td></tr>` : "";
-    return `<tr class="${isLowRes ? "low" : ""}">
+    const detail = open ? oreDetail("g", id, ss, 5, { withOwner: true }) : "";
+    return `<tr class="grp${isLowRes ? " low" : ""}${open ? " open" : ""}" data-open="${esc(id)}">
       <td>${resCell(r)}${r && r.category ? `<span class="chip">${esc(r.category)}</span>` : ""}${isLowRes ? ' <span class="pill low">Sous le seuil</span>' : ""}</td>
       <td><div class="qty">${esc(sumsText(unitSums(ss)))}</div></td>
       <td>${aq == null ? '<span class="muted">–</span>' : `<div class="qual">Q moy. ${aq}</div>`}${lotChips(lots)}</td>
       <td>${owners} membre${owners > 1 ? "s" : ""}<div class="colordesc">${places} lieu${places > 1 ? "x" : ""}</div></td>
-      <td><button type="button" data-open="${esc(id)}" aria-expanded="${open}">${open ? "Masquer" : "Détail"}</button></td></tr>${detail}`;
+      <td><button type="button" aria-expanded="${open}">${open ? "Masquer" : "Qualités"}</button></td></tr>${detail}`;
   }).join("");
 }
-$("#stockBody").addEventListener("click", e => {
-  const b = e.target.closest("[data-open]"); if (!b) return;
-  const id = b.dataset.open; if (gOpen.has(id)) gOpen.delete(id); else gOpen.add(id);
-  renderGlobal();
-});
+oreClicks($("#stockBody"), gOpen, () => renderGlobal());
 ["#q", "#gQmin", "#gQmax"].forEach(s => $(s).addEventListener("input", renderGlobal));
 ["#cat", "#gLoc", "#gMember"].forEach(s => $(s).addEventListener("change", renderGlobal));
 $("#gExport").addEventListener("click", () => exportStocks(stocksFiltered(), false));
@@ -425,6 +458,7 @@ function exportStocks(rows, withLegacy) {
 
 // ---------- mon inventaire (ou celui d'un autre membre, en lecture) ----------
 const mineOwner = () => $("#mOwner").value || (st.me && st.me.id);
+const mOpen = new Set();
 const canEditOwner = id => !!st.me && (id === st.me.id || isAdmin());
 function renderMine() {
   memberOptions($("#mOwner"));
@@ -434,14 +468,25 @@ function renderMine() {
   const ids = new Set(mine.filter(s => num(s.quantity) > 0).map(s => s.location_id));
   locationOptions($("#mLoc"), ids, self ? "Tous mes lieux" : "Tous ses lieux");
   const loc = $("#mLoc").value;
-  const rows = mine.filter(s => num(s.quantity) > 0 && (!loc || s.location_id === loc)).sort((a, b) =>
-    locName(a.location_id).localeCompare(locName(b.location_id)) || byName(resOf(a.resource_id), resOf(b.resource_id)) || qVal(b.quality_key) - qVal(a.quality_key));
+  const rows = mine.filter(s => num(s.quantity) > 0 && (!loc || s.location_id === loc));
   const canEdit = canEditOwner(owner);
   $("#mineEmpty").hidden = rows.length > 0;
-  $("#mineBody").innerHTML = rows.map(s => `<tr>
-    <td>${resCell(resOf(s.resource_id))}</td><td>${esc(locName(s.location_id))}</td><td class="num">${qLabel(s.quality_key)}</td>
-    <td class="num"><strong>${fmt(s.quantity)}</strong>${esc(unitTxt(s.unit))}</td><td class="muted">${dateTxt(s.updated_at)}</td>
-    <td>${canEdit ? `<button type="button" data-use="${s.id}">Mouvement</button>` : ""}</td></tr>`).join("");
+  // Une ligne par minerai ; ses qualités et ses lieux se déplient au clic.
+  const byRes = new Map();
+  for (const s of rows) { if (!byRes.has(s.resource_id)) byRes.set(s.resource_id, []); byRes.get(s.resource_id).push(s); }
+  const list = [...byRes.entries()].map(([id, ss]) => ({ id, r: resOf(id), ss })).sort((a, b) => byName(a.r, b.r));
+  $("#mineBody").innerHTML = list.map(({ id, r, ss }) => {
+    const lots = {}; for (const s of ss) lots[s.quality_key] = num(lots[s.quality_key]) + num(s.quantity);
+    const places = [...new Set(ss.map(s => locName(s.location_id)))].sort();
+    const upd = ss.reduce((m, s) => (s.updated_at > m ? s.updated_at : m), ""), open = mOpen.has(id), aq = avgQ(lots);
+    return `<tr class="grp${open ? " open" : ""}" data-open="${esc(id)}">
+      <td>${resCell(r)}</td>
+      <td>${places.length > 2 ? `${places.length} lieux` : esc(places.join(", "))}</td>
+      <td>${aq == null ? "" : `<div class="qual">Q moy. ${aq}</div>`}${lotChips(lots)}</td>
+      <td class="num"><strong>${esc(sumsText(unitSums(ss)))}</strong></td><td class="muted">${dateTxt(upd)}</td>
+      <td><button type="button" aria-expanded="${open}">${open ? "Masquer" : "Qualités"}</button></td></tr>`
+      + (open ? oreDetail("m" + owner, id, ss, 6, { canEdit }) : "");
+  }).join("");
   // Date du dernier relevé fiable, par lieu.
   const last = new Map();
   for (const sc of st.scansMeta) if (sc.user_id === owner && !last.has(sc.location_id)) last.set(sc.location_id, sc);
@@ -462,6 +507,7 @@ $("#mLoc").addEventListener("change", () => { $("#mvPlace").value = $("#mLoc").v
 $("#mvKind").innerHTML = `<optgroup label="Entrée">${INC_KINDS.map(k => `<option value="${k}">${KIND[k]}</option>`).join("")}</optgroup>`
   + `<optgroup label="Sortie">${DEC_KINDS.map(k => `<option value="${k}">${KIND[k]}</option>`).join("")}</optgroup>`
   + `<optgroup label="Correction"><option value="correction">Corriger la quantité (valeur exacte)</option></optgroup>`;
+oreClicks($("#mineBody"), mOpen, () => renderMine());
 $("#mineBody").addEventListener("click", e => {
   const b = e.target.closest("[data-use]"); if (!b) return;
   const s = st.stocks.find(x => String(x.id) === b.dataset.use); if (!s) return;

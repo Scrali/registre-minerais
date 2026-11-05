@@ -244,3 +244,15 @@ table.sub th,table.sub td{padding:4px 8px}
 .refimg .acts button{min-height:0;padding:3px 8px;font-size:12px}
 .tag.ok{color:var(--ok)}
 #iDrop .refgrid{max-width:none;justify-content:center}
+/* Minerai regroupé : ligne cliquable, qualités sélectionnables */
+tr.grp{cursor:pointer}
+tr.grp:hover>td{background:var(--soft)}
+tr.grp.open>td{background:var(--soft);border-bottom-color:transparent}
+.qpicks{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}
+.qpick{display:inline-flex;flex-direction:column;align-items:flex-start;gap:1px;padding:5px 10px;min-height:40px;border-radius:8px;font:inherit;font-size:12px;line-height:1.2;text-align:left}
+.qpick b{font-family:var(--f-mono);font-size:13px}
+.qpick small{color:var(--muted);font-size:11px}
+.qpick.hi b{color:var(--ok, #1a7f4b)}
+.qpick.on{outline:2px solid var(--accent, #2563eb);outline-offset:-1px;background:color-mix(in srgb, var(--accent, #2563eb) 12%, transparent)}
+.qhint{font-size:12px;margin:2px 0 8px}
+.linkbtn{background:none;border:0;padding:0;min-height:0;color:var(--accent, #2563eb);text-decoration:underline;font:inherit;cursor:pointer}
