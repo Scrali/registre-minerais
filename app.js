@@ -345,10 +345,10 @@ const createResource = (v, source, note) =>
 const KIND = {
   initial: "Stock initial", increase: "Hausse à classer", deposit: "Dépôt", production: "Production minière",
   transfer_in: "Transfert reçu", purchase: "Achat", decrease: "Baisse à classer", withdrawal: "Retrait",
-  sale: "Vente", transfer_out: "Transfert envoyé", refining: "Raffinage", consumption: "Consommation", loss: "Perte",
+  refined: "Sortie de raffinerie", sale: "Vente", transfer_out: "Transfert envoyé", refining: "Raffinage", consumption: "Consommation", loss: "Perte",
   correction: "Correction", legacy_attribution: "Ancien stock attribué",
 };
-const INC_KINDS = ["production", "deposit", "transfer_in", "purchase"];
+const INC_KINDS = ["production", "refined", "deposit", "transfer_in", "purchase"];
 const DEC_KINDS = ["sale", "transfer_out", "refining", "consumption", "loss", "withdrawal"];
 const qLabel = q => (q === "-" || q == null) ? "Q?" : "Q" + q;
 const unitTxt = u => u ? " " + u : "";
@@ -672,7 +672,7 @@ $("#legacyBody").addEventListener("click", async e => {
 
 // ---------- contributions ----------
 const CAT = {
-  production: ["production"], other_in: ["deposit", "transfer_in", "purchase", "legacy_attribution"], unknown_in: ["increase"],
+  production: ["production"], other_in: ["refined", "deposit", "transfer_in", "purchase", "legacy_attribution"], unknown_in: ["increase"],
   out: ["withdrawal", "sale", "transfer_out", "refining", "consumption", "loss"], unknown_out: ["decrease"],
   initial: ["initial"], correction: ["correction"],
 };
@@ -966,7 +966,12 @@ document.querySelectorAll("input[name=capCov]").forEach(r => r.addEventListener(
 ["#capOwner", "#capTerminal", "#capPlace", "#capRefPanel"].forEach(sel => $(sel).addEventListener("change", hideDiff));
 // Raffinerie : on choisit quel ordre lire (celui en préparation ou un ordre terminé).
 const refPanel = () => $("#capRefPanel").value === "done" ? "done" : "setup";
-$("#capTerminal").addEventListener("change", () => { $("#capRefBox").hidden = $("#capTerminal").value !== "raffinerie"; });
+$("#capTerminal").addEventListener("change", () => {
+  const raf = $("#capTerminal").value === "raffinerie";
+  $("#capRefBox").hidden = !raf;
+  // Un ordre de raffinerie s'ajoute au stock : la question « partie ou inventaire complet » ne se pose pas.
+  $("#capCovBox").hidden = raf;
+});
 
 // Réduit l'image (2000 px max) pour limiter le coût d'analyse et le temps d'envoi.
 async function toBase64Jpeg(file) {
@@ -1212,6 +1217,8 @@ function detectedTerminal() {
   for (const s of st.shots) if (s.terminal && s.terminal !== "inconnu") votes[s.terminal] = (votes[s.terminal] || 0) + 1;
   return (Object.entries(votes).sort((a, b) => b[1] - a[1])[0] || ["inconnu"])[0];
 }
+// Raffinerie : un ordre est un lot qui s'AJOUTE au stock du lieu (deux ordres s'additionnent), pas un relevé.
+const isRefineryScan = () => ($("#capTerminal").value || detectedTerminal()) === "raffinerie";
 function scanPayload(extra = {}) {
   const times = st.shots.map(s => s.observedAt).filter(Boolean);
   const items = st.items.filter(it => it.target && it.target !== "new").map(it => {
@@ -1222,7 +1229,7 @@ function scanPayload(extra = {}) {
   });
   return {
     location: $("#capPlace").value.trim(), owner_id: scanOwner(), terminal_type: $("#capTerminal").value || detectedTerminal(),
-    coverage: capCoverage(), observed_at: new Date(times.length ? Math.min(...times) : Date.now()).toISOString(),
+    coverage: isRefineryScan() ? "partial" : capCoverage(), ...(isRefineryScan() ? { mode: "add" } : {}), observed_at: new Date(times.length ? Math.min(...times) : Date.now()).toISOString(),
     fingerprints: st.shots.map(s => s.fp).filter(Boolean), page_count: st.shots.length, note: $("#capNote").value.trim(),
     items, ...extra,
   };
@@ -1231,11 +1238,14 @@ function setMsg(sel, t, err) { const el = $(sel); el.textContent = t; el.classNa
 async function preview() {
   st.scanKey = crypto.randomUUID();
   st.diff = await rpc("apply_scan", { p: scanPayload(), p_dry_run: true });
+  st.diff.add = isRefineryScan();
+  // Lots de raffinerie : nature « sortie de raffinerie » proposée d'office (modifiable).
+  if (st.diff.add) for (const c of st.diff.changes || []) { const k = `${c.resource_id}|${c.quality_key}|${c.unit}`; if (c.delta > 0 && !st.reasons[k]) st.reasons[k] = "refined"; }
   renderDiff();
 }
 $("#compare").addEventListener("click", async () => {
   if (!$("#capPlace").value.trim()) { $("#capPlace").focus(); return setMsg("#compareMsg", "Choisis le lieu de stockage avant de comparer.", true); }
-  if (capCoverage() === "complete" && st.shots.some(s => s.status !== "done"))
+  if (!isRefineryScan() && capCoverage() === "complete" && st.shots.some(s => s.status !== "done"))
     return setMsg("#compareMsg", "Pour un inventaire complet, toutes les pages doivent être analysées sans erreur.", true);
   if (st.items.some(it => it.on && !it.name.trim())) return setMsg("#compareMsg", "Chaque ligne cochée doit avoir un nom.", true);
   $("#compare").disabled = true; setMsg("#compareMsg", "Comparaison avec le dernier relevé…");
@@ -1258,12 +1268,14 @@ function renderDiff() {
   const d = st.diff; if (!d) return;
   $("#diff").hidden = false;
   const ch = d.changes || [], notes = [];
-  notes.push(`${ch.length} variation${ch.length > 1 ? "s" : ""} et ${d.unchanged} ligne${d.unchanged > 1 ? "s" : ""} inchangée${d.unchanged > 1 ? "s" : ""} pour ${$("#capPlace").value.trim()}${scanOwner() ? " (inventaire de " + who(scanOwner()) + ")" : ""}.`);
+  if (d.add) notes.push(`Raffinerie : chaque lot lu s'ajoute au stock déjà enregistré${$("#capPlace").value.trim() ? " à " + $("#capPlace").value.trim() : ""} ; rien d'autre ne change.`);
+  else notes.push(`${ch.length} variation${ch.length > 1 ? "s" : ""} et ${d.unchanged} ligne${d.unchanged > 1 ? "s" : ""} inchangée${d.unchanged > 1 ? "s" : ""} pour ${$("#capPlace").value.trim()}${scanOwner() ? " (inventaire de " + who(scanOwner()) + ")" : ""}.`);
   const firsts = ch.filter(c => c.initial).length;
   if (firsts) notes.push(`${firsts} premier${firsts > 1 ? "s" : ""} relevé${firsts > 1 ? "s" : ""} : point de départ, jamais compté comme apport.`);
   const abs = ch.filter(c => c.absent).length;
   if (abs) notes.push(`Attention : ${abs} ligne${abs > 1 ? "s" : ""} absente${abs > 1 ? "s" : ""} des captures passer${abs > 1 ? "ont" : "a"} à 0, car tu as indiqué un inventaire complet.`);
-  if (d.duplicate_images) notes.push("Attention : une de ces images a déjà été enregistrée pour ce lieu. Vérifie que ce n'est pas la même capture.");
+  if (d.duplicate_images) notes.push(d.add ? "Attention : cette capture a déjà été enregistrée pour ce lieu. L'enregistrer encore ajouterait les mêmes lots une deuxième fois."
+    : "Attention : une de ces images a déjà été enregistrée pour ce lieu. Vérifie que ce n'est pas la même capture.");
   if (d.stale) notes.push(`Attention : cette capture est plus ancienne que le dernier état enregistré (${dateTxt(d.last_state_at)}). L'appliquer remplacerait un état plus récent.`);
   const dups = st.items.filter(i => i.dup && !i.on).length;
   if (dups) notes.push(`${dups} case${dups > 1 ? "s" : ""} probablement répétée${dups > 1 ? "s" : ""} entre deux pages ${dups > 1 ? "ont été décochées" : "a été décochée"}.`);

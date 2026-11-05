@@ -253,3 +253,34 @@ test("Fusion de ressources : les stocks personnels suivent, sans perte ni doublo
   assert.equal(await stock(matsu, "Lorville", quanta), before + 5);
   await rejects(rpc(db, admin, "delete_resource", [quanta]), /possèdent encore/);
 });
+
+test("Raffinerie (migration 013) : chaque ordre s'ajoute au stock du lieu, sans rien remplacer", async () => {
+  const lieu = "Levski raffinerie";
+  await runRemaining(db, "013");   // relancer la migration ne change rien
+  const raf = (items, extra = {}) => scan(matsu, lieu, items, { terminal_type: "raffinerie", mode: "add", coverage: "complete", reasons: {}, ...extra });
+  // Un autre minerai déjà présent : un ordre de raffinerie ne doit jamais le mettre à 0.
+  await scan(matsu, lieu, [line(aphorite, "500", 3, "SCU")]);
+  const r1 = await raf([line(quanta, "382", 16.05, "SCU"), line(quanta, "597", 6.23, "SCU")],
+    { reasons: { [`${quanta}|382|SCU`]: "refined" } });
+  assert.equal(r1.coverage, "partial", "toujours partielle");
+  assert.equal(await stock(matsu, lieu, quanta, "382", "SCU"), 16.05);
+  const kindOf = async q => (await db.query(`select kind from movements where owner_id = $1 and resource_id = $2 and quality_key = $3 order by id desc limit 1`, [matsu, quanta, q])).rows[0].kind;
+  assert.equal(await kindOf("382"), "refined", "premier lot : sortie de raffinerie, pas un stock initial");
+  assert.equal(await kindOf("597"), "increase", "sans nature choisie : hausse à classer, jamais « stock initial »");
+  // Aperçu du deuxième ordre : la variation est le lot lu, l'état final la somme.
+  const pv = await preview(matsu, lieu, [line(quanta, "382", 24.71, "SCU")], { mode: "add" });
+  assert.equal(Number(pv.changes[0].before), 16.05);
+  assert.equal(Number(pv.changes[0].after), 40.76);
+  assert.equal(Number(pv.changes[0].delta), 24.71);
+  await raf([line(quanta, "382", 24.71, "SCU"), line(quanta, "597", 4.3, "SCU")]);
+  assert.equal(await stock(matsu, lieu, quanta, "382", "SCU"), 40.76);
+  assert.equal(await stock(matsu, lieu, quanta, "597", "SCU"), 10.53);
+  assert.equal(await stock(matsu, lieu, aphorite, "500", "SCU"), 3, "les autres minerais ne changent pas");
+  // Ajout plus ancien que le dernier état : accepté (ce n'est pas un relevé).
+  await raf([line(quanta, "597", 1, "SCU")], { observed_at: new Date(Date.now() - 864e5).toISOString() });
+  assert.equal(await stock(matsu, lieu, quanta, "597", "SCU"), 11.53);
+  await rejects(raf([line(quanta, "597", 0, "SCU")]), /Quantité invalide/);
+  // Sans le mode ajout, rien ne change : une capture reste un relevé.
+  await scan(matsu, lieu, [line(quanta, "597", 5, "SCU")]);
+  assert.equal(await stock(matsu, lieu, quanta, "597", "SCU"), 5);
+});
