@@ -1048,33 +1048,48 @@ function markOverlaps() {
 function renderReview() {
   $("#review").hidden = false;
   const opts = st.resources.slice().sort(byName);
-  const sizes = {};
-  for (const it of st.items) sizes[it.group] = (sizes[it.group] || 0) + 1;
-  $("#reviewBody").innerHTML = st.items.map((it, i) => {
-    const linked = sizes[it.group] > 1 ? `<br>${sizes[it.group]} lots de ce type · <button type="button" class="linkbtn" data-split="${i}" title="Ce caillou n'est pas le même minerai : le nommer à part">Séparer</button>` : "";
-    const r = st.resources.find(x => x.id === it.target);
-    if (!r && it.target !== "new") it.target = "new";
-    // Vignette lue, à côté de l'image de référence de la ressource choisie pour comparer d'un coup d'œil.
-    const views = r ? refsOf(r) : [];
-    const ref = views.length ? `<img class="crop ref" src="${esc(views[0])}" alt="" title="Image de référence de ${esc(r.name)}${views.length > 1 ? ` (+${views.length - 1} autre${views.length > 2 ? "s" : ""} vue${views.length > 2 ? "s" : ""})` : ""}">` : "";
-    const known = it.crop && views.includes(it.crop);
-    const setRef = r && it.crop && !known
-      ? `<br><button type="button" class="linkbtn" data-ref="${i}" data-how="add" title="Cette case montre bien ${esc(r.name)} : elle servira de modèle, en plus des autres vues (utile quand le caillou s'affiche autrement, par exemple dans un ascenseur de fret)">${views.length ? "Ajouter comme vue de référence" : "Définir l'image de référence"}</button>`
-        + (views.length ? ` · <button type="button" class="linkbtn" data-ref="${i}" data-how="main" title="Remplace l'image principale, affichée dans le stock">Image principale</button>` : "") : "";
-    const pic = it.crop ? `<span class="pics"><img class="crop" src="${it.crop}" alt="Case lue sur la capture">${ref}</span>` : swatch(it.hex, it.color);
-    const warn = [];
-    if (it.dup) warn.push('<span class="tag warn" title="La même suite de cases termine la page précédente : cette case est sans doute déjà comptée">Déjà vue page précédente ?</span>');
-    if (it.confidence != null && it.confidence < 0.7) warn.push('<span class="tag warn" title="L\'IA n\'est pas sûre de cette lecture">Lecture incertaine</span>');
-    return `<tr data-i="${i}" class="${it.on ? "" : "off"}">
+  const groups = new Map();
+  st.items.forEach((it, i) => { if (!groups.has(it.group)) groups.set(it.group, []); groups.get(it.group).push(i); });
+  for (const it of st.items) if (it.target !== "new" && !st.resources.some(x => x.id === it.target)) it.target = "new";
+  // Boutons « vue de référence » / « image principale » pour la vignette d'une case.
+  const refBtns = i => {
+    const it = st.items[i], r = resOf(it.target), views = r ? refsOf(r) : [];
+    if (!r || !it.crop || views.includes(it.crop)) return "";
+    return `<span class="rv-acts"><button type="button" class="linkbtn" data-ref="${i}" data-how="add" title="Cette vignette montre bien ${esc(r.name)} : elle rejoint ses images de référence (utile quand le caillou s'affiche autrement selon l'écran)">${views.length ? "+ Ajouter aux références" : "Utiliser comme référence"}</button>`
+      + (views.length ? `<button type="button" class="linkbtn" data-ref="${i}" data-how="main" title="Remplace l'image affichée pour ${esc(r.name)} partout sur le site">Mettre en image principale</button>` : "") + "</span>";
+  };
+  const rows = [];
+  for (const idx of groups.values()) {
+    const it0 = st.items[idx[0]], r0 = resOf(it0.target), many = idx.length > 1;
+    if (many) rows.push(`<tr class="rv-grp"><td colspan="8">
+        <b>${idx.length} lots qui se ressemblent</b>${it0.color ? ` · ${esc(it0.color)}` : ""} → <b>${esc(r0 ? r0.name : "nouvelle ressource")}</b>
+        <span class="muted">· changer le minerai d'une ligne change tout le groupe ; « Séparer » sort une ligne du groupe.</span>
+        ${refBtns(idx[0])}</td></tr>`);
+    for (const i of idx) {
+      const it = st.items[i], r = resOf(it.target), views = r ? refsOf(r) : [];
+      const pic = it.crop
+        ? `<div class="rv-pics"><figure><img class="crop" src="${it.crop}" alt="Case lue sur la capture"><figcaption>Capture</figcaption></figure>`
+          + (views.length ? `<figure><img class="crop ref" src="${esc(views[0])}" alt="" title="Image de référence de ${esc(r.name)}${views.length > 1 ? ` (+${views.length - 1} autre${views.length > 2 ? "s" : ""} vue${views.length > 2 ? "s" : ""})` : ""}"><figcaption>Référence</figcaption></figure>` : `<figure><span class="crop ref none">?</span><figcaption>Aucune réf.</figcaption></figure>`)
+          + "</div>"
+        : swatch(it.hex, it.color);
+      const warn = [];
+      if (it.dup) warn.push('<span class="tag warn" title="La même suite de cases termine la page précédente : cette case est sans doute déjà comptée">Déjà vue page précédente ?</span>');
+      if (it.confidence != null && it.confidence < 0.7) warn.push('<span class="tag warn" title="L\'IA n\'est pas sûre de cette lecture">Lecture incertaine</span>');
+      if (it.by === "couleur") warn.push('<span class="tag" title="Le nom n\'était pas lisible : reconnu par l\'apparence du caillou">Reconnu par l\'apparence</span>');
+      const extra = many ? `<span class="rv-acts"><button type="button" class="linkbtn" data-split="${i}" title="Ce caillou n'est pas le même minerai que les autres du groupe : le nommer à part">Séparer</button></span>`
+        : `${it.color ? `<div class="colordesc">${esc(it.color)}</div>` : ""}${refBtns(i)}`;
+      rows.push(`<tr data-i="${i}" class="${it.on ? "" : "off"}${many ? " in-grp" : ""}">
       <td><input type="checkbox" data-f="on" id="rv-on-${i}" ${it.on ? "checked" : ""} aria-label="Inclure cette ligne"></td>
       <td class="pg">p. ${shotPage(it.shot) || "–"}</td>
       <td><input type="text" data-f="name" id="rv-name-${i}" value="${esc(it.name)}">${warn.length ? `<div class="warns">${warn.join(" ")}</div>` : ""}</td>
-      <td><div style="display:flex;align-items:center;min-width:130px">${pic}<span class="colordesc">${esc(it.color || "–")}${it.by === "couleur" ? "<br>reconnu par l'apparence" : ""}${linked}${setRef}</span></div></td>
+      <td class="rv-case">${pic}${extra}</td>
       <td><input type="number" class="qin" step="1" min="0" max="1000" placeholder="?" data-f="quality" id="rv-q-${i}" value="${esc(it.quality)}" aria-label="Qualité"></td>
       <td><input type="number" step="any" min="0" data-f="qty" id="rv-qty-${i}" value="${it.qty}" aria-label="Quantité"></td>
       <td><input type="text" class="uin" data-f="unit" id="rv-unit-${i}" list="unitList" maxlength="20" placeholder="objets" value="${esc(it.unit)}" aria-label="Unité"></td>
-      <td><select data-f="target" id="rv-target-${i}"><option value="new"${it.target === "new" ? " selected" : ""}>Nouvelle ressource (ajoutée au catalogue)</option>${opts.map(o => `<option value="${esc(o.id)}"${o.id === it.target ? " selected" : ""}>${esc(o.name)}</option>`).join("")}</select></td></tr>`;
-  }).join("");
+      <td><select data-f="target" id="rv-target-${i}"><option value="new"${it.target === "new" ? " selected" : ""}>Nouvelle ressource (ajoutée au catalogue)</option>${opts.map(o => `<option value="${esc(o.id)}"${o.id === it.target ? " selected" : ""}>${esc(o.name)}</option>`).join("")}</select></td></tr>`);
+    }
+  }
+  $("#reviewBody").innerHTML = rows.join("");
   const n = st.items.filter(i => i.on).length;
   $("#compare").textContent = n ? `Comparer ${n} lot${n > 1 ? "s" : ""} avec le stock enregistré` : "Aucune ligne cochée";
   $("#compare").disabled = !n;

@@ -268,3 +268,18 @@ tr.grp.open>td{background:var(--soft);border-bottom-color:transparent}
 .perm input{width:18px;height:18px;margin:0}
 .perm-note{font-size:12px;align-self:center}
 #pOrgBox select{flex:1;min-width:180px}
+
+/* Tableau de lecture : vignettes côte à côte, groupes de lots semblables */
+.rv-case{min-width:190px}
+.rv-pics{display:flex;gap:8px;align-items:flex-end}
+.rv-pics figure{margin:0;display:flex;flex-direction:column;align-items:center;gap:3px}
+.rv-pics figcaption{font:500 10px var(--f-mono);letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.rv-pics .crop{margin-right:0}
+.rv-pics .crop.ref{width:56px;height:56px}
+.crop.ref.none{display:flex;align-items:center;justify-content:center;color:var(--muted);background:var(--soft);outline-style:dashed;cursor:default}
+.rv-acts{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:6px}
+.rv-acts .linkbtn{min-height:0;font-size:12px;white-space:nowrap}
+.rv-case .colordesc{margin-top:4px}
+tr.rv-grp td{background:var(--soft);font-size:13px;padding-top:8px;padding-bottom:8px;border-left:3px solid var(--accent)}
+tr.rv-grp .rv-acts{display:inline-flex;margin:0 0 0 10px}
+tr.in-grp td:first-child{border-left:3px solid var(--accent)}
