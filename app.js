@@ -298,7 +298,9 @@ const debounce = (fn, ms) => { let t; return () => { clearTimeout(t); t = setTim
 // Bibliothèque d'images (migration 007). Avant la migration, on garde l'ancien affichage.
 async function loadRefImages() {
   try {
-    st.refImages = await fetchAll("reference_images", "id, resource_id, terminal_type, image, added_by, created_at, source", "id");
+    const cols = "id, resource_id, terminal_type, image, added_by, created_at, source";
+    // screen_main (image choisie par écran) arrive avec la migration 011.
+    st.refImages = await fetchAll("reference_images", cols + ", screen_main", "id").catch(() => fetchAll("reference_images", cols, "id"));
     st.libReady = true;
   } catch (_) { st.refImages = []; st.libReady = false; }
   $("#tabImg").hidden = !st.libReady;
@@ -1054,9 +1056,14 @@ function renderReview() {
   // Boutons « vue de référence » / « image principale » pour la vignette d'une case.
   const refBtns = i => {
     const it = st.items[i], r = resOf(it.target), views = r ? refsOf(r) : [];
-    if (!r || !it.crop || views.includes(it.crop)) return "";
-    return `<span class="rv-acts"><button type="button" class="linkbtn" data-ref="${i}" data-how="add" title="Cette vignette montre bien ${esc(r.name)} : elle rejoint ses images de référence (utile quand le caillou s'affiche autrement selon l'écran)">${views.length ? "+ Ajouter aux références" : "Utiliser comme référence"}</button>`
-      + (views.length ? `<button type="button" class="linkbtn" data-ref="${i}" data-how="main" title="Remplace l'image affichée pour ${esc(r.name)} partout sur le site">Mettre en image principale</button>` : "") + "</span>";
+    if (!r || !it.crop) return "";
+    const term = itemTerminal(it), sr = screenRef(r.id, term);
+    const screenBtn = st.libReady && term !== "inconnu" && can("catalog") && !(sr && sr.image === it.crop)
+      ? `<button type="button" class="linkbtn" data-ref="${i}" data-how="screen" title="Cette vignette devient l'image de ${esc(r.name)} pour l'écran « ${esc(TERM[term])} » : elle sert de comparaison pour les prochaines captures de cet écran">Image pour l'écran ${esc(TERM[term].replace(/^./, c => c.toLowerCase()))}</button>` : "";
+    const known = views.includes(it.crop) || libOf(r.id).some(x => x.image === it.crop);
+    return `<span class="rv-acts">${known ? "" : `<button type="button" class="linkbtn" data-ref="${i}" data-how="add" title="Cette vignette montre bien ${esc(r.name)} : elle rejoint ses images de référence (utile quand le caillou s'affiche autrement selon l'écran)">${views.length ? "+ Ajouter aux références" : "Utiliser comme référence"}</button>`}`
+      + screenBtn
+      + (views.length && r.image !== it.crop ? `<button type="button" class="linkbtn" data-ref="${i}" data-how="main" title="Remplace l'image affichée pour ${esc(r.name)} dans le stock et partout sur le site">Mettre en image principale</button>` : "") + "</span>";
   };
   const rows = [];
   for (const idx of groups.values()) {
@@ -1067,9 +1074,12 @@ function renderReview() {
         ${refBtns(idx[0])}</td></tr>`);
     for (const i of idx) {
       const it = st.items[i], r = resOf(it.target), views = r ? refsOf(r) : [];
+      // Référence de l'écran de la capture si le minerai en a une, sinon l'image principale.
+      const sr = r ? screenRef(r.id, itemTerminal(it)) : null, refSrc = sr ? sr.image : views[0];
+      const refCap = sr ? "Réf. " + (TERM[sr.terminal_type] || "").replace(/^./, c => c.toLowerCase()).replace("inventaire personnel", "inventaire") : "Réf. principale";
       const pic = it.crop
         ? `<div class="rv-pics"><figure><img class="crop" src="${it.crop}" alt="Case lue sur la capture"><figcaption>Capture</figcaption></figure>`
-          + (views.length ? `<figure><img class="crop ref" src="${esc(views[0])}" alt="" title="Image de référence de ${esc(r.name)}${views.length > 1 ? ` (+${views.length - 1} autre${views.length > 2 ? "s" : ""} vue${views.length > 2 ? "s" : ""})` : ""}"><figcaption>Référence</figcaption></figure>` : `<figure><span class="crop ref none">?</span><figcaption>Aucune réf.</figcaption></figure>`)
+          + (refSrc ? `<figure><img class="crop ref" src="${esc(refSrc)}" alt="" title="${esc(r.name)} : ${sr ? `image choisie pour l'écran « ${esc(TERM[sr.terminal_type])} »` : "image principale (aucune image pour cet écran)"}${views.length > 1 ? ` · ${views.length} images en tout` : ""}"><figcaption>${esc(refCap)}</figcaption></figure>` : `<figure><span class="crop ref none">?</span><figcaption>Aucune réf.</figcaption></figure>`)
           + "</div>"
         : swatch(it.hex, it.color);
       const warn = [];
@@ -1107,6 +1117,7 @@ $("#reviewBody").addEventListener("click", async e => {
         // Bibliothèque : l'image rejoint les vues de ce minerai, classée par écran ; l'ancienne principale reste.
         const id = await addToLibrary(r.id, it.crop, itemTerminal(it), "capture");
         if (rb.dataset.how === "main") await rpc("set_primary_image", { p_id: id });
+        if (rb.dataset.how === "screen" && !(libById(id) || {}).screen_main) await rpc("set_screen_image", { p_id: id });
         await Promise.all([loadResources(), loadRefImages()]);
       } else if (rb.dataset.how === "main") {
         const old = r.image;
@@ -1285,6 +1296,12 @@ $("#forceStale").addEventListener("click", () => commitScan(true));
 const TERM = { inventaire: "Inventaire personnel", ascenseur_fret: "Ascenseur de fret", asop: "Terminal ASOP", autre: "Autre écran", inconnu: "Écran non précisé" };
 const libOf = id => st.refImages.filter(x => x.resource_id === id);
 const libById = id => st.refImages.find(x => String(x.id) === String(id));
+// Image d'un minerai pour un écran : celle choisie pour cet écran, sinon la plus récente de cet écran.
+function screenRef(resourceId, term) {
+  if (!term || term === "inconnu") return null;
+  const l = libOf(resourceId).filter(x => x.terminal_type === term);
+  return l.find(x => x.screen_main) || l.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))[0] || null;
+}
 // Écran d'une case lue : celui choisi pour la capture, sinon celui détecté par l'IA sur sa page.
 function itemTerminal(it) {
   if ($("#capTerminal").value) return $("#capTerminal").value;
@@ -1313,11 +1330,12 @@ function renderImages() {
       <div class="imgcard-h">${resCell(r)}<span class="muted">${esc(summary)}</span></div>
       ${imgs.length ? `<div class="imgrow">${imgs.map(x => {
         const main = x.image === r.image, mine = st.me && (x.added_by === st.me.id || can("catalog"));
+        const sr = screenRef(r.id, x.terminal_type), isScreen = sr && sr.id === x.id;
         return `<figure class="refimg${main ? " main" : ""}">
           <img src="${esc(x.image)}" alt="${esc(r.name)}, ${esc(TERM[x.terminal_type])}" loading="lazy">
-          <figcaption><span class="tag">${esc(TERM[x.terminal_type])}</span>${main ? '<span class="tag ok">Principale</span>' : ""}
+          <figcaption><span class="tag">${esc(TERM[x.terminal_type])}</span>${main ? '<span class="tag ok">Principale</span>' : ""}${isScreen ? `<span class="tag ok" title="${x.screen_main ? "Choisie" : "Plus récente, aucune choisie"} pour comparer les captures de cet écran">Image de l'écran${x.screen_main ? "" : " (auto)"}</span>` : ""}
             <span class="muted">${esc(who(x.added_by))}, ${dateTxt(x.created_at)}</span></figcaption>
-          <div class="acts">${main || !can("catalog") ? "" : `<button type="button" data-lib="main" data-id="${x.id}">Principale</button>`}${mine ? `<button type="button" class="danger" data-lib="del" data-id="${x.id}">Retirer</button>` : ""}</div>
+          <div class="acts">${main || !can("catalog") ? "" : `<button type="button" data-lib="main" data-id="${x.id}">Principale</button>`}${!can("catalog") || x.terminal_type === "inconnu" || !("screen_main" in x) || (isScreen && !x.screen_main) ? "" : `<button type="button" data-lib="screen" data-id="${x.id}" title="${x.screen_main ? "Ne plus imposer cette image pour cet écran" : "Utiliser cette image pour comparer les captures de cet écran"}">${x.screen_main ? "Retirer le choix" : "Pour cet écran"}</button>`}${mine ? `<button type="button" class="danger" data-lib="del" data-id="${x.id}">Retirer</button>` : ""}</div>
         </figure>`;
       }).join("")}</div>` : '<div class="muted" style="padding:4px 0 8px">Aucune image : ajoute une capture de ce caillou ci-dessus, ou depuis la vérification d\'une capture.</div>'}
     </section>`;
@@ -1335,6 +1353,7 @@ $("#imgGrid").addEventListener("click", async e => {
   b.disabled = true;
   try {
     if (b.dataset.lib === "main") await rpc("set_primary_image", { p_id: x.id });
+    else if (b.dataset.lib === "screen") await rpc("set_screen_image", { p_id: x.id });
     else await rpc("delete_reference_image", { p_id: x.id });
     setStatus(""); await Promise.all([loadResources(), loadRefImages()]);
   } catch (err) { setStatus(errText(err)); b.disabled = false; }

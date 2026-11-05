@@ -92,17 +92,21 @@ Deno.serve(async (req) => {
 
     const { data: resources } = await sb.from("resources").select("id, name, unit, color, color_name, image, refs").order("name");
     // Bibliothèque d'images classées par écran. Si la table n'existe pas encore, on reprend image + refs.
-    const { data: lib, error: libErr } = await sb.from("reference_images")
-      .select("resource_id, terminal_type, image").order("created_at", { ascending: false });
+    // screen_main (image choisie pour un écran, migration 011) : si la colonne manque, on relit sans elle.
+    const readLib = (cols: string) => sb.from("reference_images").select(cols).order("created_at", { ascending: false });
+    let libRes = await readLib("resource_id, terminal_type, image, screen_main");
+    if (libRes.error) libRes = await readLib("resource_id, terminal_type, image");
+    const lib = libRes.data as unknown as { resource_id: string; terminal_type: string; image: string; screen_main?: boolean }[] | null;
+    const libErr = libRes.error;
     const PREFIX = "data:image/jpeg;base64,";
     const isImg = (s: unknown): s is string => typeof s === "string" && s.startsWith(PREFIX);
     const TERM_LABEL: Record<string, string> = { inventaire: "inventaire personnel", ascenseur_fret: "ascenseur de fret", asop: "terminal ASOP", autre: "autre écran", inconnu: "écran non précisé" };
     const hint = typeof terminal_hint === "string" && terminal_hint in TERM_LABEL && terminal_hint !== "inconnu" ? terminal_hint : null;
-    type View = { img: string; term: string };
+    type View = { img: string; term: string; main?: boolean };
     const views = new Map<string, View[]>();
     for (const r of resources ?? []) {
       const own = libErr ? [r.image, ...(Array.isArray(r.refs) ? r.refs : [])].filter(isImg).map((img) => ({ img, term: "inconnu" }))
-        : (lib ?? []).filter((x) => x.resource_id === r.id && isImg(x.image)).map((x) => ({ img: x.image as string, term: x.terminal_type as string }));
+        : (lib ?? []).filter((x) => x.resource_id === r.id && isImg(x.image)).map((x) => ({ img: x.image as string, term: x.terminal_type as string, main: !!x.screen_main }));
       if (own.length) views.set(r.id, own);
     }
     // 80 images au plus : jusqu'à 4 par ressource. On privilégie l'écran de la capture s'il est connu,
@@ -112,7 +116,7 @@ Deno.serve(async (req) => {
     function pick(r: { image: string }, list: View[]): View[] {
       const groups = new Map<string, View[]>();
       for (const v of list) { if (!groups.has(v.term)) groups.set(v.term, []); groups.get(v.term)!.push(v); }
-      for (const g of groups.values()) g.sort((a, b) => Number(b.img === r.image) - Number(a.img === r.image));
+      for (const g of groups.values()) g.sort((a, b) => Number(!!b.main) - Number(!!a.main) || Number(b.img === r.image) - Number(a.img === r.image));
       const order = [...groups.keys()].sort((a, b) =>
         Number(b === hint) - Number(a === hint) || Number(groups.get(b)!.some((v) => v.img === r.image)) - Number(groups.get(a)!.some((v) => v.img === r.image)));
       const out: View[] = [];

@@ -100,3 +100,24 @@ test("Écran « Terminal ASOP » (migration 010) : accepté pour les images et l
   assert.equal((await d.query(`select terminal_type from inventory_scans order by id desc limit 1`)).rows[0].terminal_type, "asop");
   await assert.rejects(d.query(`insert into reference_images (resource_id, terminal_type, image) values ($1, 'ecran_bidon', $2)`, [r, img("R")]));
 });
+
+test("Image choisie par écran (migration 011) : une seule par minerai et par écran, droit « catalogue »", async () => {
+  const d = await freshDb();
+  const a = await addUser(d, "Admin", "admin"), m = await addUser(d, "Membre");
+  const r = await rpc(d, a, "create_resource", [JSON.stringify({ name: "Fer" }), "manuel", ""]);
+  const add = (c, t) => rpc(d, m, "add_reference_image", [r, img(c), t, "capture", ""]);
+  const f1 = await add("F", "ascenseur_fret"), f2 = await add("G", "ascenseur_fret"), i1 = await add("I", "inventaire"), u = await add("U", "inconnu");
+  const chosen = async () => (await d.query(`select id from reference_images where screen_main order by id`)).rows.map(x => Number(x.id));
+  await rejects(rpc(d, m, "set_screen_image", [f1]), /catalogue/);
+  await rpc(d, a, "set_screen_image", [f1]);
+  await rpc(d, a, "set_screen_image", [i1]);
+  assert.deepEqual(await chosen(), [Number(f1), Number(i1)]);
+  await rpc(d, a, "set_screen_image", [f2]);
+  assert.deepEqual(await chosen(), [Number(f2), Number(i1)], "l'ascenseur change, l'inventaire reste");
+  await rpc(d, a, "set_screen_image", [f2]);
+  assert.deepEqual(await chosen(), [Number(i1)], "recliquer retire le choix");
+  await rejects(rpc(d, a, "set_screen_image", [u]), /écran/);
+  const before = (await d.query(`select image from resources where id = $1`, [r])).rows[0].image;
+  await rpc(d, a, "set_screen_image", [f1]);
+  assert.equal((await d.query(`select image from resources where id = $1`, [r])).rows[0].image, before, "l'image principale ne change pas");
+});
