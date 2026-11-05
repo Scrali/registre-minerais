@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="style.css?v=23">
+<link rel="stylesheet" href="style.css?v=24">
 </head>
 <body>
 
@@ -143,6 +143,7 @@
           <label id="capRefBox" hidden>Ordre de raffinerie à lire
             <select id="capRefPanel">
               <option value="setup">Ordre de travail (mise en place)</option>
+              <option value="running">Ordre en cours (traitement en cours)</option>
               <option value="done">Ordre terminé</option>
             </select>
           </label>
@@ -578,8 +579,8 @@
 </dialog>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-<script src="config.js?v=23"></script>
-<script src="scanlogic.js?v=23"></script>
-<script src="app.js?v=23"></script>
+<script src="config.js?v=24"></script>
+<script src="scanlogic.js?v=24"></script>
+<script src="app.js?v=24"></script>
 </body>
 </html>

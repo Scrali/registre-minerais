@@ -966,7 +966,7 @@ document.querySelectorAll("input[name=capCov]").forEach(r => r.addEventListener(
 }));
 ["#capOwner", "#capTerminal", "#capPlace", "#capRefPanel"].forEach(sel => $(sel).addEventListener("change", hideDiff));
 // Raffinerie : on choisit quel ordre lire (celui en préparation ou un ordre terminé).
-const refPanel = () => $("#capRefPanel").value === "done" ? "done" : "setup";
+const refPanel = () => ["done", "running"].includes($("#capRefPanel").value) ? $("#capRefPanel").value : "setup";
 // Enregistrement : « Mettre à jour » (relevé : la quantité lue remplace), « Ajouter » (les lots s'additionnent)
 // ou « Fin de run » (la récolte s'additionne, comptée comme production minière).
 const MODE_HINT = {

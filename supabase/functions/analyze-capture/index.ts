@@ -45,13 +45,15 @@ const SCHEMA = {
   },
 };
 
-function buildPrompt(known: string, refs: number, panel: "setup" | "done") {
+function buildPrompt(known: string, refs: number, panel: "setup" | "running" | "done") {
   return `La capture d'écran à analyser (la dernière image, juste avant ce texte) vient d'un jeu vidéo. Elle montre un inventaire, une soute, un entrepôt ou une liste de ressources (minerais, cailloux, matériaux, marchandises).
 Ignore tout ce qui n'est pas une ressource : équipement, armes, armures, outils, consommables, boutons, menus, crédits, noms de joueurs.
 ÉCRAN : indique dans terminal_type l'écran capturé : "inventaire" pour l'inventaire personnel ou local du personnage (panneaux « Personnel », « Local », vue d'équipement), "ascenseur_fret" pour l'interface d'un ascenseur de fret ou d'un terminal d'entrepôt (liste de marchandises et de caisses, chargement et déchargement), "asop" pour un terminal ASOP (gestion des vaisseaux, avec le contenu de la soute d'un vaisseau), "raffinerie" pour un terminal de raffinerie (titre « RAFFINERIE », ordres de travail), "autre" pour un autre écran, "inconnu" si tu ne sais pas.
-RAFFINERIE : si l'écran est une raffinerie, ${panel === "done"
-  ? `relève UNIQUEMENT les « matières produites » de l'ordre de travail TERMINÉ (panneau marqué « TERMINÉ », colonnes QUALITÉ et RENDEMENT). Ignore complètement le panneau « MISE EN PLACE ».`
-  : `relève UNIQUEMENT les lignes de l'ordre de travail en préparation (panneau « MISE EN PLACE », tableau « matériaux sélectionnés » avec les colonnes QUALITÉ, QTÉ, RENDEMENT, RAFFINER). Ne relève pas les lignes dont le rendement est vide ou « -- », ni celles dont la case RAFFINER n'est pas cochée. Ignore complètement un panneau « TERMINÉ ».`}
+RAFFINERIE : si l'écran est une raffinerie, ${panel === "running"
+  ? `relève UNIQUEMENT les « matières produites » des ordres de travail EN COURS (panneaux marqués « TRAITEMENT EN COURS », colonnes QUALITÉ, RENDEMENT, À FAIRE, FINI). S'il y a plusieurs ordres en cours, relève les lignes de chacun. Prends la colonne RENDEMENT (quantité totale que l'ordre produira), jamais « À FAIRE » ni « FINI ». Ignore les panneaux « MISE EN PLACE » et « TERMINÉ », et le temps restant.`
+  : panel === "done"
+  ? `relève UNIQUEMENT les « matières produites » de l'ordre de travail TERMINÉ (panneau marqué « TERMINÉ », colonnes QUALITÉ et RENDEMENT). Ignore complètement les panneaux « MISE EN PLACE » et « TRAITEMENT EN COURS ».`
+  : `relève UNIQUEMENT les lignes de l'ordre de travail en préparation (panneau « MISE EN PLACE », tableau « matériaux sélectionnés » avec les colonnes QUALITÉ, QTÉ, RENDEMENT, RAFFINER). Ne relève pas les lignes dont le rendement est vide ou « -- », ni celles dont la case RAFFINER n'est pas cochée. Ignore complètement les panneaux « TERMINÉ » et « TRAITEMENT EN COURS ».`}
 Chaque ligne relevée est un lot : name = le minerai, quality = la colonne QUALITÉ, qty = la colonne RENDEMENT, unit = "cSCU". N'utilise JAMAIS la colonne « QTÉ » (minerai brut avant raffinage). Ignore les spécialisations de la station, le coût, le délai, la capacité, les totaux « dans le manifeste », « à raffiner » et « RENDEMENT » de l'ordre, et le contenu du vaisseau. Le suffixe « (M) » ou « [M] » ne fait pas partie du nom. Les icônes de lingot sont toutes identiques : identifie par le nom écrit (by = "nom"), et box = l'icône de la ligne.
 FORMAT DES CASES (inventaire, soute, entrepôt) : chaque case de minerai est un LOT.
 - Le nombre suivi de « Q » (ex. « 258Q ») est la QUALITÉ du lot, de 0 à 1000. Ce n'est PAS une quantité.
@@ -89,7 +91,7 @@ Deno.serve(async (req) => {
     if (!ok) return json({ error: "Tu n'as pas le droit d'analyser des captures, ou ton compte n'est pas encore validé : demande-le à un administrateur de ton organisation." }, 403);
 
     const { image, media_type, terminal_hint, refinery_panel } = await req.json();
-    const panel = refinery_panel === "done" ? "done" : "setup";
+    const panel = refinery_panel === "done" || refinery_panel === "running" ? refinery_panel : "setup";
     if (typeof image !== "string" || !MEDIA_TYPES.includes(media_type)) {
       return json({ error: "Image manquante ou format non pris en charge (PNG, JPEG, WebP, GIF)." }, 400);
     }
