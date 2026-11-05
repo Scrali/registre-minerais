@@ -6,6 +6,8 @@ Site de gestion des stocks de minerais d'une organisation : comptes membres vali
 - **Comptes et base de données** : Supabase (offre gratuite)
 - **Lecture des captures** : API Claude (payante, à l'usage), appelée depuis une fonction Supabase pour que la clé reste secrète
 
+Fonctionnement technique détaillé (architecture, données, sécurité) : [`docs/FONCTIONNEMENT.md`](docs/FONCTIONNEMENT.md).
+
 ## Mise en route (une seule fois, environ 15 minutes)
 
 ### 1. Créer le projet Supabase
