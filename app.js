@@ -72,7 +72,9 @@ const GAME_PLACES = [
   ["MIC-L1 Shallow Frontier Station", "Stanton · Lagrange"], ["MIC-L2 Long Forest Station", "Stanton · Lagrange"],
   ["MIC-L3 Endless Odyssey Station", "Stanton · Lagrange"], ["MIC-L4 Red Crossroads Station", "Stanton · Lagrange"],
   ["MIC-L5 Modern Icarus Station", "Stanton · Lagrange"],
-  ["Stanton Gateway", "Stanton · porte de saut"], ["Pyro Gateway", "Pyro · porte de saut"],
+  // Une « Gateway » porte le nom du système vers lequel elle mène : Nyx Gateway se trouve dans Pyro.
+  ["Pyro Gateway", "Porte de saut vers Pyro (Stanton, Nyx)"], ["Stanton Gateway", "Porte de saut vers Stanton (Pyro, Nyx)"],
+  ["Nyx Gateway", "Porte de saut vers Nyx (Pyro, Stanton)"],
   ["Ruin Station", "Pyro"], ["Checkmate", "Pyro"], ["Orbituary", "Pyro"], ["Starlight Service Station", "Pyro"],
   ["Patch City", "Pyro"], ["Gaslight", "Pyro"], ["Rod's Fuel 'N Supplies", "Pyro"], ["Rat's Nest", "Pyro"],
   ["Endgame", "Pyro"], ["Dudley & Daughters", "Pyro"], ["Megumi Refueling", "Pyro"],
