@@ -284,6 +284,7 @@ async function loadStocks() {
         .order("observed_at", { ascending: false }).limit(2000).then(r => { if (r.error) throw r.error; return r.data; }),
     ]);
     Object.assign(st, { stocks, locations, legacy, scansMeta: scans, v2: true });
+    try { bp.cache = null; if (!$("#bpView").hidden) renderBlueprints(); } catch (_) { /* onglet pas encore prêt */ }
   } catch (err) {
     st.v2 = false;
     setStatus(/does not exist|schema cache|relation/i.test(errText(err))
@@ -310,6 +311,7 @@ async function loadRefImages() {
 }
 const reloadRes = debounce(loadResources, 250), reloadStocks = debounce(loadStocks, 250), reloadLib = debounce(loadRefImages, 250);
 const reloadReq = debounce(() => loadRequests(), 250);
+const reloadBp = debounce(() => loadBlueprints(), 1500);
 const reloadMoves = debounce(() => { loadMoves(); loadMyMoves(); }, 250);
 function startRealtime() {
   if (st.channel) return;
@@ -321,6 +323,9 @@ function startRealtime() {
     .on("postgres_changes", { event: "*", schema: "public", table: "locations" }, reloadStocks)
     .on("postgres_changes", { event: "*", schema: "public", table: "reference_images" }, reloadLib)
     .on("postgres_changes", { event: "*", schema: "public", table: "requests" }, reloadReq)
+    .on("postgres_changes", { event: "*", schema: "public", table: "sc_sync_runs" }, () => { if (bp.loaded) reloadBp(); })
+    .on("postgres_changes", { event: "*", schema: "public", table: "member_blueprints" }, () => { if (bp.loaded) reloadBp(); })
+    .on("postgres_changes", { event: "*", schema: "public", table: "sc_material_map" }, () => { if (bp.loaded) reloadBp(); })
     .on("postgres_changes", { event: "*", schema: "public", table: "organizations" }, () => { if (st.me && st.me.role !== "pending") loadOrgs(); })
     .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, payload => {
       if (st.me && payload.new && payload.new.id === st.me.id && rightsSig(payload.new) !== rightsSig(st.me)) return sb.auth.getSession().then(r => enter(r.data.session));
@@ -346,10 +351,18 @@ const KIND = {
   initial: "Stock initial", increase: "Hausse à classer", deposit: "Dépôt", production: "Production minière",
   transfer_in: "Transfert reçu", purchase: "Achat", decrease: "Baisse à classer", withdrawal: "Retrait",
   refined: "Sortie de raffinerie", sale: "Vente", transfer_out: "Transfert envoyé", refining: "Raffinage", consumption: "Consommation", loss: "Perte",
+  delivery: "Livraison",
   correction: "Correction", legacy_attribution: "Ancien stock attribué",
 };
 const INC_KINDS = ["production", "refined", "deposit", "transfer_in", "purchase"];
-const DEC_KINDS = ["sale", "transfer_out", "refining", "consumption", "loss", "withdrawal"];
+const DEC_KINDS = ["sale", "delivery", "transfer_out", "refining", "consumption", "loss", "withdrawal"];
+// Motifs proposés dans « Déclarer un mouvement » (un transfert interne passe par « Transférer »).
+const MV_KINDS = {
+  remove: [["sale", "Vente"], ["delivery", "Livraison"], ["consumption", "Consommation"], ["refining", "Envoi en raffinerie"], ["loss", "Perte"],
+           ["withdrawal", "Autre retrait"], ["transfer_out", "Transfert hors de l'organisation (note obligatoire)"]],
+  add: [["production", "Production minière"], ["refined", "Sortie de raffinerie"], ["deposit", "Dépôt"], ["purchase", "Achat"],
+        ["transfer_in", "Reçu hors de l'organisation (note obligatoire)"]],
+};
 const qLabel = q => (q === "-" || q == null) ? "Q?" : "Q" + q;
 const unitTxt = u => u ? " " + u : "";
 const locName = id => (st.locations.find(l => l.id === id) || {}).name || "Lieu inconnu";
@@ -586,36 +599,121 @@ function renderMine() {
   rs.innerHTML = st.resources.slice().sort(byName).map(r => `<option value="${esc(r.id)}">${esc(r.name)}</option>`).join("");
   if (cur && st.resources.some(r => r.id === cur)) rs.value = cur;
   if (!$("#mvPlace").value) $("#mvPlace").value = loc ? locName(loc) : $("#capPlace").value;
+  renderMvLots();
 }
 $("#mOwner").addEventListener("change", () => { renderMine(); loadMyMoves(); });
 $("#mLoc").addEventListener("change", () => { $("#mvPlace").value = $("#mLoc").value ? locName($("#mLoc").value) : $("#mvPlace").value; renderMine(); });
-$("#mvKind").innerHTML = `<optgroup label="Entrée">${INC_KINDS.map(k => `<option value="${k}">${KIND[k]}</option>`).join("")}</optgroup>`
-  + `<optgroup label="Sortie">${DEC_KINDS.map(k => `<option value="${k}">${KIND[k]}</option>`).join("")}</optgroup>`
-  + `<optgroup label="Correction"><option value="correction">Corriger la quantité (valeur exacte)</option></optgroup>`;
 oreClicks($("#mineBody"), mOpen, () => renderMine());
 $("#mineBody").addEventListener("click", e => {
   const b = e.target.closest("[data-use]"); if (!b) return;
   const s = st.stocks.find(x => String(x.id) === b.dataset.use); if (!s) return;
   $("#mvRes").value = s.resource_id; $("#mvPlace").value = locName(s.location_id);
   $("#mvQ").value = s.quality_key === "-" ? "" : s.quality_key; $("#mvUnit").value = s.unit;
+  mvReset(); renderMvLots();
   $("#moveForm").scrollIntoView({ block: "nearest" }); $("#mvQty").focus();
 });
+// ---------- déclarer un mouvement : aperçu, puis confirmation ----------
+// L'identifiant d'opération est créé à l'aperçu et réutilisé tant que l'opération n'a pas réussi :
+// un double clic ou une nouvelle tentative après une coupure réseau ne l'applique jamais deux fois.
+const mvType = () => (document.querySelector("input[name=mvType]:checked") || {}).value || "remove";
+function showMvType() {
+  const t = mvType();
+  $("#mvKindBox").hidden = !MV_KINDS[t];
+  if (MV_KINDS[t]) {
+    const cur = $("#mvKind").value;
+    $("#mvKind").innerHTML = MV_KINDS[t].map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join("");
+    if (MV_KINDS[t].some(([k]) => k === cur)) $("#mvKind").value = cur;
+  }
+  $("#mvToPlaceBox").hidden = $("#mvToOwnerBox").hidden = t !== "transfer";
+  $("#mvPlaceLbl").textContent = t === "transfer" ? "Depuis le lieu" : "Lieu";
+  $("#mvNote").placeholder = t === "set" ? "Motif de la correction (obligatoire)" : "Facultative";
+  $("#mvGo").textContent = "Vérifier";
+  if (t === "transfer") memberOptions($("#mvToOwner"));
+  renderMvLots();
+}
+document.querySelectorAll("input[name=mvType]").forEach(r => r.addEventListener("change", () => { mvReset(); showMvType(); }));
+// Lots existants du membre pour la ressource et le lieu choisis : un clic remplit qualité et unité exactes.
+function renderMvLots() {
+  const owner = mineOwner(), res = $("#mvRes").value, slug = norm($("#mvPlace").value);
+  const lots = st.stocks.filter(s => s.user_id === owner && s.resource_id === res && num(s.quantity) > 0
+    && (!slug || norm(locName(s.location_id)) === slug)).sort((a, b) => qVal(b.quality_key) - qVal(a.quality_key));
+  $("#mvLots").innerHTML = lots.length && mvType() !== "add"
+    ? `<span class="muted" style="font-size:13px;align-self:center">Lots disponibles :</span>` + lots.map(s =>
+      `<button type="button" class="chip pick" data-lot="${s.id}">${esc(locName(s.location_id))} · ${qLabel(s.quality_key)} · ${fmt(s.quantity)}${esc(unitTxt(s.unit) || " objets")}</button>`).join("")
+    : "";
+}
+$("#mvLots").addEventListener("click", e => {
+  const b = e.target.closest("[data-lot]"); if (!b) return;
+  const s = st.stocks.find(x => String(x.id) === b.dataset.lot); if (!s) return;
+  $("#mvPlace").value = locName(s.location_id); $("#mvQ").value = s.quality_key === "-" ? "" : s.quality_key; $("#mvUnit").value = s.unit;
+  mvReset(); $("#mvQty").focus();
+});
+function mvReset() { st.mvPending = null; $("#mvPreview").hidden = true; $("#mvGo").hidden = false; }
+["#mvRes", "#mvPlace", "#mvQ", "#mvUnit", "#mvQty", "#mvKind", "#mvToPlace", "#mvToOwner", "#mvNote"].forEach(sel =>
+  $(sel).addEventListener("input", () => { mvReset(); if (sel === "#mvRes" || sel === "#mvPlace") renderMvLots(); }));
+$("#mvRes").addEventListener("change", renderMvLots);
+function mvPayload() {
+  const t = mvType(), owner = mineOwner(), base = { resource_id: $("#mvRes").value, quality_key: $("#mvQ").value, unit: $("#mvUnit").value.trim(),
+    quantity: num($("#mvQty").value), note: $("#mvNote").value.trim() };
+  if (t === "transfer") return { fn: "transfer_stock", p: { ...base, from_owner: owner === st.me.id ? null : owner, from_location: $("#mvPlace").value.trim(),
+    to_location: ($("#mvToPlace").value || $("#mvPlace").value).trim(), to_owner: $("#mvToOwner").value || null } };
+  return { fn: "adjust_stock", p: { ...base, owner_id: owner === st.me.id ? null : owner, location: $("#mvPlace").value.trim(), mode: t,
+    kind: t === "set" ? null : $("#mvKind").value } };
+}
+const qtyTxt = (v, u) => fmt(v) + (u ? " " + u : " objets");
+function renderMvPreview(r, fn) {
+  const lot = `${esc(r.name)} ${qLabel(r.quality_key)} · ${esc(r.unit || "objets")}`;
+  let html;
+  if (fn === "transfer_stock") {
+    html = `<div>${lot}</div><div class="big">${esc(locName(r.from.location_id))}${r.from.owner_id !== r.to.owner_id ? " (" + esc(who(r.from.owner_id)) + ")" : ""} : ${fmt(r.from.before)} → ${fmt(r.from.after)}</div>
+      <div class="big">${esc(locName(r.to.location_id))}${r.from.owner_id !== r.to.owner_id ? " (" + esc(who(r.to.owner_id)) + ")" : ""} : ${fmt(r.to.before)} → ${fmt(r.to.after)}</div>
+      <div class="muted">Transfert de ${qtyTxt(r.quantity, r.unit)} : le total de l'organisation ne change pas.</div>`;
+  } else {
+    html = `<div>${lot} · ${esc(locName(r.location_id))}${r.owner_id !== st.me.id ? " · inventaire de " + esc(who(r.owner_id)) : ""} · ${esc(KIND[r.kind] || r.kind)}</div>
+      <div class="big">Avant ${fmt(r.before)} · ${r.delta > 0 ? "+" : r.delta < 0 ? "−" : ""}${fmt(Math.abs(r.delta))} · Après ${fmt(r.after)}</div>`;
+  }
+  $("#mvPreviewText").innerHTML = html;
+  const sim = (r.similar || []);
+  $("#mvWarn").hidden = !sim.length;
+  $("#mvWarn").textContent = sim.length ? "Doublon possible : " + sim.map(m => `${m.delta > 0 ? "+" : ""}${fmt(m.delta)} (${KIND[m.kind] || m.kind}${m.scan ? ", constaté par capture" : ""}) ${ago(m.at)}`).join(" ; ")
+    + (sim.some(m => m.unclassified) ? ". Si c'est la même opération, classe plutôt la variation dans la liste des mouvements au lieu de la déclarer une deuxième fois." : ". Confirme seulement s'il s'agit d'une nouvelle opération.") : "";
+  $("#mvPreview").hidden = false; $("#mvGo").hidden = true;
+  $("#mvConfirm").focus();
+}
 $("#moveForm").addEventListener("submit", async e => {
   e.preventDefault();
-  const kind = $("#mvKind").value, mode = kind === "correction" ? "set" : INC_KINDS.includes(kind) ? "add" : "remove";
-  const owner = mineOwner(), m = $("#mvMsg");
-  const p = { owner_id: owner === st.me.id ? null : owner, location: $("#mvPlace").value.trim(), resource_id: $("#mvRes").value,
-    quality_key: $("#mvQ").value, unit: $("#mvUnit").value.trim(), mode, quantity: num($("#mvQty").value),
-    kind: mode === "set" ? null : kind, note: $("#mvNote").value.trim() };
-  $("#mvGo").disabled = true;
+  const m = $("#mvMsg"), { fn, p } = mvPayload();
+  $("#mvGo").disabled = true; m.textContent = ""; m.className = "formmsg";
   try {
-    const r = await rpc("adjust_stock", { p });
-    m.textContent = r ? `Mouvement enregistré (${KIND[r.kind] || r.kind}) : ${fmt(r.before)} → ${fmt(r.after)}.` : "Aucun changement : la quantité est déjà celle-ci.";
-    m.className = "formmsg ok"; $("#mvQty").value = ""; $("#mvNote").value = "";
-    await loadStocks(); loadMyMoves();
+    const r = await rpc(fn, { p: { ...p, dry_run: true } });
+    // L'aperçu fixe la quantité de départ : si le stock change avant la confirmation, le serveur refuse.
+    st.mvPending = { fn, p: { ...p, operation_id: crypto.randomUUID(), expected_before: fn === "transfer_stock" ? r.from.before : r.before } };
+    renderMvPreview(r, fn);
   } catch (err) { m.textContent = errText(err); m.className = "formmsg err"; }
   $("#mvGo").disabled = false;
 });
+$("#mvEdit").addEventListener("click", () => { mvReset(); $("#mvQty").focus(); });
+$("#mvConfirm").addEventListener("click", async () => {
+  const pend = st.mvPending, m = $("#mvMsg"); if (!pend) return;
+  $("#mvConfirm").disabled = true; m.textContent = "Enregistrement…"; m.className = "formmsg";
+  try {
+    const r = await rpc(pend.fn, { p: pend.p });
+    m.textContent = pend.fn === "transfer_stock"
+      ? `Transfert enregistré : ${fmt(r.from.before)} → ${fmt(r.from.after)} à ${locName(r.from.location_id)}, ${fmt(r.to.before)} → ${fmt(r.to.after)} à ${locName(r.to.location_id)}.`
+      : r.unchanged ? "Aucun changement : la quantité est déjà celle-ci." : `Mouvement enregistré (${KIND[r.kind] || r.kind}) : ${fmt(r.before)} → ${fmt(r.after)}.`;
+    if (r.replayed) m.textContent += " (déjà enregistré : rien n'a été appliqué deux fois)";
+    m.className = "formmsg ok"; $("#mvQty").value = ""; $("#mvNote").value = ""; mvReset();
+    await loadStocks(); loadMyMoves();
+  } catch (err) {
+    const t = errText(err);
+    if (/STATE_CHANGED/.test(t)) { mvReset(); m.textContent = t.replace(/^STATE_CHANGED:\s*/, "") + " Clique sur « Vérifier »."; }
+    // Erreur réseau : on garde le même identifiant, « Confirmer » peut être relancé sans risque de doublon.
+    else m.textContent = t + (/fetch|network|réseau|Failed/i.test(t) ? " Tu peux cliquer à nouveau sur « Confirmer » : l'opération ne sera appliquée qu'une fois." : "");
+    m.className = "formmsg err";
+  }
+  $("#mvConfirm").disabled = false;
+});
+showMvType();
 
 // Mouvements du membre affiché ; une hausse ou une baisse d'origine inconnue peut être classée après coup.
 let movesReq = 0;
@@ -626,18 +724,44 @@ async function loadMyMoves() {
   if (error || req !== movesReq) return;
   st.myMoves = data || []; renderMyMoves();
 }
+// Annulable par mouvement compensatoire : saisie manuelle, correction ou transfert, pas encore annulé.
+const canReverse = m => !m.undone_at && !m.reverses_id && ["stock", "correction", "transfer"].includes(m.mode)
+  && !["initial", "legacy_attribution"].includes(m.kind) && num(m.delta) !== 0;
 function renderMyMoves() {
   const canEdit = canEditOwner(mineOwner());
   $("#myMovesEmpty").hidden = st.myMoves.length > 0;
   $("#myMoves").innerHTML = st.myMoves.map(m => {
-    const d = num(m.delta), open = m.kind === "increase" || m.kind === "decrease";
+    const d = num(m.delta), open = (m.kind === "increase" || m.kind === "decrease") && !m.undone_at && !m.reverses_id && !m.transfer_id;
     const opts = (d > 0 ? INC_KINDS : DEC_KINDS).map(k => `<option value="${k}">${KIND[k]}</option>`).join("");
-    return `<li><div><span class="d ${d > 0 ? "up" : d < 0 ? "down" : ""}">${d > 0 ? "+" : ""}${fmt(d)}${esc(unitTxt(m.unit))}</span> · <strong>${esc(m.name)}</strong> <span class="muted">${qLabel(m.quality_key)}</span></div>
-      <div class="meta">${esc(locName(m.location_id))} · <span class="tag${open ? " warn" : ""}">${esc(KIND[m.kind] || m.kind || "")}</span>${m.note ? " · " + esc(m.note) : ""}</div>
+    const rev = st.revOpen === m.id;
+    const tags = (m.reverses_id ? ' · <span class="tag">Annulation</span>' : "") + (m.undone_at ? ' · <span class="tag">Annulé</span>' : "")
+      + (m.transfer_id && !m.reverses_id ? ' · <span class="tag">Transfert lié</span>' : "");
+    return `<li class="${m.undone_at ? "undone" : ""}"><div><span class="d ${d > 0 ? "up" : d < 0 ? "down" : ""}">${d > 0 ? "+" : ""}${fmt(d)}${esc(unitTxt(m.unit))}</span> · <strong>${esc(m.name)}</strong> <span class="muted">${qLabel(m.quality_key)}</span></div>
+      <div class="meta">${esc(locName(m.location_id))} · <span class="tag${open ? " warn" : ""}">${esc(KIND[m.kind] || m.kind || "")}</span>${tags}${m.note ? " · " + esc(m.note) : ""}</div>
       ${open && canEdit ? `<div class="meta"><select data-classify="${m.id}" aria-label="Préciser la nature du mouvement"><option value="">Préciser la nature…</option>${opts}</select></div>` : ""}
-      <div class="meta">${fmt(m.before)} → ${fmt(m.after)} · ${m.by && m.by !== m.owner_id ? "par " + esc(who(m.by)) + " · " : ""}${ago(m.at)}</div></li>`;
+      <div class="meta">${fmt(m.before)} → ${fmt(m.after)} · ${m.by && m.by !== m.owner_id ? "par " + esc(who(m.by)) + " · " : ""}${ago(m.at)}
+        ${canEdit && canReverse(m) && !rev ? ` · <button type="button" class="linkbtn" data-rev="${m.id}">Annuler…</button>` : ""}</div>
+      ${rev ? `<div class="revbox"><input type="text" id="revNote" maxlength="200" placeholder="Motif de l'annulation (obligatoire)" aria-label="Motif de l'annulation">
+        <button type="button" class="danger" data-revgo="${m.id}">Annuler ce mouvement${m.transfer_id ? " (et son transfert lié)" : ""}</button><button type="button" data-revno>Garder</button></div>` : ""}</li>`;
   }).join("");
+  if (st.revOpen) { const i = $("#revNote"); if (i) i.focus(); }
 }
+$("#myMoves").addEventListener("click", async e => {
+  const open = e.target.closest("[data-rev]"), go = e.target.closest("[data-revgo]"), no = e.target.closest("[data-revno]");
+  if (open) { st.revOpen = Number(open.dataset.rev); st.revOp = { id: st.revOpen, op: crypto.randomUUID() }; return renderMyMoves(); }
+  if (no) { st.revOpen = null; return renderMyMoves(); }
+  if (!go) return;
+  const id = Number(go.dataset.revgo), note = ($("#revNote") || {}).value || "";
+  if (!note.trim()) { setStatus("Indique le motif de l'annulation."); return; }
+  if (!st.revOp || st.revOp.id !== id) st.revOp = { id, op: crypto.randomUUID() };
+  go.disabled = true;
+  try {
+    // Même identifiant si on réessaie après une erreur réseau : jamais deux annulations.
+    await rpc("reverse_movement", { p: { operation_id: st.revOp.op, movement_id: id, note: note.trim() } });
+    st.revOpen = null; st.revOp = null; setStatus("");
+    await loadStocks(); loadMyMoves();
+  } catch (err) { setStatus(errText(err)); go.disabled = false; }
+});
 $("#myMoves").addEventListener("change", async e => {
   const s = e.target.closest("[data-classify]"); if (!s || !s.value) return;
   s.disabled = true;
@@ -673,7 +797,7 @@ $("#legacyBody").addEventListener("click", async e => {
 // ---------- contributions ----------
 const CAT = {
   production: ["production"], other_in: ["refined", "deposit", "transfer_in", "purchase", "legacy_attribution"], unknown_in: ["increase"],
-  out: ["withdrawal", "sale", "transfer_out", "refining", "consumption", "loss"], unknown_out: ["decrease"],
+  out: ["withdrawal", "sale", "delivery", "transfer_out", "refining", "consumption", "loss"], unknown_out: ["decrease"],
   initial: ["initial"], correction: ["correction"],
 };
 async function loadStats() {
@@ -1228,7 +1352,7 @@ $("#reviewBody").addEventListener("change", e => {
 });
 
 // ---------- comparaison avec le dernier relevé, puis enregistrement transactionnel ----------
-function hideDiff() { $("#diff").hidden = true; st.diff = null; $("#forceStale").hidden = true; $("#commit").hidden = false; }
+function hideDiff() { $("#diff").hidden = true; st.diff = null; $("#forceStale").hidden = true; $("#forceDup").hidden = true; $("#commit").hidden = false; }
 const scanOwner = () => can("edit_others") && $("#capOwner").value && $("#capOwner").value !== st.me.id ? $("#capOwner").value : null;
 function detectedTerminal() {
   const votes = {};
@@ -1296,7 +1420,15 @@ function renderDiff() {
   if (abs) notes.push(`Attention : ${abs} ligne${abs > 1 ? "s" : ""} absente${abs > 1 ? "s" : ""} des captures passer${abs > 1 ? "ont" : "a"} à 0, car tu as indiqué un inventaire complet.`);
   if (d.duplicate_images) notes.push(d.add ? "Attention : cette capture a déjà été enregistrée pour ce lieu. L'enregistrer encore ajouterait les mêmes lots une deuxième fois."
     : "Attention : une de ces images a déjà été enregistrée pour ce lieu. Vérifie que ce n'est pas la même capture.");
+  if ((d.similar || []).length) notes.push(`Attention : ${d.similar.length} lot${d.similar.length > 1 ? "s" : ""} identique${d.similar.length > 1 ? "s" : ""} (même minerai, qualité et quantité) ${d.similar.length > 1 ? "ont" : "a"} déjà été ajouté${d.similar.length > 1 ? "s" : ""} ici ces derniers jours. Vérifie qu'il ne s'agit pas du même lot.`);
   if (d.stale) notes.push(`Attention : cette capture est plus ancienne que le dernier état enregistré (${dateTxt(d.last_state_at)}). L'appliquer remplacerait un état plus récent.`);
+  // Case isolée identique sur deux pages (même minerai, qualité et quantité) : peut-être la même case vue deux fois.
+  if (!d.add && st.shots.length > 1) {
+    const seen = new Map();
+    for (const i of st.items.filter(x => x.on)) { const k = ScanLogic.sig(i); if (!seen.has(k)) seen.set(k, new Set()); seen.get(k).add(i.shot); }
+    const rep = [...seen.values()].filter(p => p.size > 1).length;
+    if (rep) notes.push(`À vérifier : ${rep} case${rep > 1 ? "s" : ""} identique${rep > 1 ? "s" : ""} sur plusieurs pages. Si c'est la même case vue deux fois, décoche le doublon (sinon elle serait comptée deux fois).`);
+  }
   const dups = st.items.filter(i => i.dup && !i.on).length;
   if (dups) notes.push(`${dups} case${dups > 1 ? "s" : ""} probablement répétée${dups > 1 ? "s" : ""} entre deux pages ${dups > 1 ? "ont été décochées" : "a été décochée"}.`);
   $("#diffMsg").innerHTML = notes.map(esc).join("<br>");
@@ -1317,13 +1449,13 @@ function renderDiff() {
 }
 $("#diffBody").addEventListener("change", e => { const s = e.target.closest("[data-reason]"); if (s) st.reasons[s.dataset.reason] = s.value; });
 $("#diffBack").addEventListener("click", () => { hideDiff(); $("#review").scrollIntoView({ block: "nearest" }); });
-async function commitScan(allowStale) {
+async function commitScan(allowStale, allowDup) {
   if (!st.diff) return;
   const place = $("#capPlace").value.trim();
-  $("#commit").disabled = true; $("#forceStale").disabled = true; setMsg("#commitMsg", "Enregistrement…");
+  $("#commit").disabled = true; $("#forceStale").disabled = true; $("#forceDup").disabled = true; setMsg("#commitMsg", "Enregistrement…");
   const reasons = {}; for (const [k, v] of Object.entries(st.reasons)) if (v) reasons[k] = v;
   try {
-    const res = await rpc("apply_scan", { p: scanPayload({ idempotency_key: st.scanKey, state_token: st.diff.state_token, reasons, allow_stale: !!allowStale }), p_dry_run: false });
+    const res = await rpc("apply_scan", { p: scanPayload({ idempotency_key: st.scanKey, state_token: st.diff.state_token, reasons, allow_stale: !!allowStale, allow_duplicate: !!allowDup }), p_dry_run: false });
     // Vignettes vérifiées → bibliothèque : une par minerai et par écran, tant qu'il en a moins de 5 pour cet écran.
     // Sans la case cochée, seulement la première image des ressources qui n'en ont aucune.
     const learn = $("#capLearn").checked && st.libReady, done = new Set();
@@ -1349,14 +1481,18 @@ async function commitScan(allowStale) {
     if (/STATE_CHANGED/.test(m)) {
       try { await preview(); setMsg("#commitMsg", "L'inventaire a changé entre-temps : l'aperçu a été recalculé, vérifie-le avant d'enregistrer.", true); }
       catch (e2) { setMsg("#commitMsg", errText(e2), true); }
+    } else if (/DUPLICATE/.test(m)) {
+      // Même image déjà ajoutée à ce lieu : on n'ajoute une deuxième fois que sur confirmation explicite.
+      $("#commit").hidden = true; $("#forceDup").hidden = false; setMsg("#commitMsg", m.replace(/^DUPLICATE:\s*/, ""), true);
     } else if (/STALE/.test(m)) {
       st.diff.stale = true; renderDiff(); setMsg("#commitMsg", m.replace(/^STALE:\s*/, ""), true);
     } else setMsg("#commitMsg", m, true);
   }
-  $("#commit").disabled = false; $("#forceStale").disabled = false;
+  $("#commit").disabled = false; $("#forceStale").disabled = false; $("#forceDup").disabled = false;
 }
 $("#commit").addEventListener("click", () => commitScan(false));
-$("#forceStale").addEventListener("click", () => commitScan(true));
+$("#forceStale").addEventListener("click", () => commitScan(true, !$("#forceDup").hidden));
+$("#forceDup").addEventListener("click", () => commitScan(!!(st.diff && st.diff.stale), true));
 
 // ---------- bibliothèque d'images de référence ----------
 const TERM = { inventaire: "Inventaire personnel", ascenseur_fret: "Ascenseur de fret", asop: "Terminal ASOP", raffinerie: "Raffinerie", autre: "Autre écran", inconnu: "Écran non précisé" };
@@ -1574,10 +1710,227 @@ $("#rqBody").addEventListener("click", async e => {
   catch (err) { setStatus(errText(err)); btn.disabled = false; }
 });
 
+// ---------- onglet Blueprints (catalogue Star Citizen Wiki) ----------
+// Lecture seule pour les stocks : on compare la recette aux stocks visibles, rien n'est jamais retiré.
+const bp = { loaded: false, loading: null, list: [], ing: new Map(), mats: [], map: {}, maps: [], owned: [], runs: [], errors: [],
+  shown: 100, open: null, cache: null, ready: true };
+const BP_STATUS = { suggested: "Suggestion à valider", confirmed: "Validée", rejected: "Aucune correspondance", unmatched: "Non trouvée" };
+const bpStockScope = () => ($("#bpStock") || {}).value || (can("view_global") ? "org" : "me");
+function bpStocks() {
+  const me = st.me && st.me.id;
+  return st.stocks.filter(s => num(s.quantity) > 0 && (bpStockScope() === "me" ? s.user_id === me : true));
+}
+async function fetchPaged(build) {
+  const out = [];
+  for (let p = 0; p < 50; p++) {
+    const { data, error } = await build().range(p * 1000, p * 1000 + 999);
+    if (error) throw error;
+    out.push(...data); if (data.length < 1000) break;
+  }
+  return out;
+}
+async function loadBlueprints() {
+  if (bp.loading) return bp.loading;
+  bp.loading = (async () => {
+    try {
+      const [list, ing, mats, maps, owned, runs] = await Promise.all([
+        fetchPaged(() => sb.from("sc_blueprints").select("id, uuid, key, output_name, output_type, output_type_label, output_grade, craft_time_seconds, game_version, first_seen_version, missing_since, current_recipe_id, web_url, is_available_by_default").order("output_name")),
+        fetchPaged(() => sb.from("sc_ingredients").select("id, recipe_id, tier_index, slot_key, slot_name, slot_position, required_count, option_count, option_index, kind, api_uuid, ore_uuid, name, quantity, unit, min_quality, sc_recipes!inner(is_current)").eq("sc_recipes.is_current", true).order("id")),
+        fetchPaged(() => sb.from("sc_materials").select("*").order("name")),
+        fetchPaged(() => sb.from("sc_material_map").select("*").order("api_uuid")),
+        fetchPaged(() => sb.from("member_blueprints").select("user_id, blueprint_id, note, created_at").is("removed_at", null).order("id")),
+        sb.from("sc_sync_runs").select("*").order("started_at", { ascending: false }).limit(10).then(r => { if (r.error) throw r.error; return r.data; }),
+      ]);
+      const ingBy = new Map();
+      for (const i of ing) { if (!ingBy.has(i.recipe_id)) ingBy.set(i.recipe_id, []); ingBy.get(i.recipe_id).push(i); }
+      Object.assign(bp, { list, ing: ingBy, mats, maps, owned, runs, loaded: true, ready: true, cache: null });
+      bp.map = Object.fromEntries(maps.filter(m => m.status === "confirmed" && m.resource_id).map(m => [m.api_uuid, m.resource_id]));
+      if (isAdmin()) {
+        const { data } = await sb.from("sc_sync_errors").select("*").order("at", { ascending: false }).limit(30);
+        bp.errors = data || [];
+      }
+    } catch (err) {
+      bp.ready = false;
+      $("#bpEmptyTxt").textContent = /does not exist|schema cache|relation/i.test(errText(err))
+        ? "La base n'est pas encore à jour : un administrateur doit exécuter la migration 015 (blueprints)."
+        : "Impossible de charger le catalogue : " + errText(err);
+    }
+    bp.loading = null;
+    renderBlueprints();
+  })();
+  return bp.loading;
+}
+const bpIng = b => bp.ing.get(b.current_recipe_id) || [];
+const bpOwners = b => bp.owned.filter(o => o.blueprint_id === b.id).map(o => o.user_id);
+const craftTxt = s => s == null ? "" : s >= 3600 ? `${Math.floor(s / 3600)} h ${Math.round(s % 3600 / 60)} min` : s >= 60 ? `${Math.round(s / 60)} min` : `${s} s`;
+function bpVerdict(b) {
+  if (!bp.cache) bp.cache = new Map();
+  if (!bp.cache.has(b.id)) bp.cache.set(b.id, BlueprintLogic.compare(bpIng(b), bpStocks(), bp.map, { crafts: 1 }));
+  return bp.cache.get(b.id);
+}
+const verdictCell = v => v.craftable === true ? '<span class="bpok">Réalisable</span>'
+  : v.craftable === false ? `<span class="bpshort">Manque ${esc(v.missing.filter(m => m.mapped).map(m => m.name).join(", "))}</span>`
+  : '<span class="bpunk">Indéterminé</span>';
+function syncLine() {
+  const r = bp.runs.find(x => x.finished_at) || bp.runs[0];
+  if (!r) return "Catalogue de l'API Star Citizen Wiki · aucune synchronisation pour l'instant.";
+  const res = { success: "réussie", partial: "partielle (voir les erreurs)", error: "en échec", running: "en cours" }[r.status] || r.status;
+  const ver = (bp.list.find(b => !b.missing_since) || {}).game_version;
+  return `Catalogue de l'API Star Citizen Wiki${ver ? " · jeu " + ver : ""} · dernière synchronisation ${dateTxt(r.finished_at || r.started_at)} : ${res}`
+    + (r.stats && r.stats.listed ? ` · ${r.stats.listed} blueprints, ${num(r.stats.new_recipes)} recette(s) nouvelle(s), ${num(r.stats.changed_recipes)} modifiée(s)` : "");
+}
+function renderBlueprints() {
+  if ($("#bpView").hidden) return;
+  if (!$("#bpStock")) {
+    const sel = document.createElement("select"); sel.id = "bpStock"; sel.setAttribute("aria-label", "Stocks comparés");
+    sel.innerHTML = (can("view_global") ? '<option value="org">Comparer aux stocks de l\'organisation</option>' : "") + '<option value="me">Comparer à mes stocks</option>';
+    $("#bpSyncGo").before(sel); sel.addEventListener("change", () => { bp.cache = null; renderBlueprints(); });
+  }
+  $("#bpSyncGo").hidden = !isAdmin();
+  $("#bpAdmin").hidden = !isAdmin() || !bp.loaded;
+  $("#bpSync").textContent = bp.loaded ? syncLine() : "Chargement du catalogue…";
+  $("#bpScope").textContent = bp.loaded ? (bpStockScope() === "org"
+    ? "Comparaison avec les stocks de tous les membres de l'organisation, tous lieux confondus. Rien n'est retiré des stocks."
+    : "Comparaison avec tes stocks seulement, tous lieux confondus. Rien n'est retiré des stocks.")
+    + (Object.keys(bp.map).length ? "" : " Aucune correspondance matière ↔ ressource n'est encore validée : un administrateur doit les valider ci-dessous.") : "";
+  const types = [...new Set(bp.list.map(b => b.output_type_label || b.output_type).filter(Boolean))].sort();
+  const tSel = $("#bpType"), tCur = tSel.value;
+  tSel.innerHTML = '<option value="">Tous les types</option>' + types.map(t => `<option>${esc(t)}</option>`).join("");
+  tSel.value = types.includes(tCur) ? tCur : "";
+  const q = norm($("#bpQ").value), own = $("#bpOwn").value, type = tSel.value, me = st.me && st.me.id;
+  const rows = bp.list.filter(b => {
+    if (b.missing_since && own !== "me" && own !== "org") return false;
+    if (type && (b.output_type_label || b.output_type) !== type) return false;
+    if (own === "me" && !bpOwners(b).includes(me)) return false;
+    if (own === "org" && !bpOwners(b).length) return false;
+    if (q && !norm(b.output_name + " " + b.key).includes(q) && !bpIng(b).some(i => norm(i.name).includes(q))) return false;
+    if (own === "ok" && bpVerdict(b).craftable !== true) return false;
+    return true;
+  });
+  $("#bpEmpty").hidden = rows.length > 0;
+  if (bp.loaded && !rows.length && bp.list.length) $("#bpEmptyTxt").textContent = "Aucun blueprint pour ces filtres.";
+  const page = rows.slice(0, bp.shown);
+  $("#bpBody").innerHTML = page.map(b => {
+    const ings = bpIng(b), owners = bpOwners(b);
+    return `<tr class="grp${bp.open === b.id ? " open" : ""}" data-bp="${b.id}" style="cursor:pointer">
+      <td><strong>${esc(b.output_name || b.key)}</strong>${b.missing_since ? ' <span class="tag warn">Retiré de l\'API</span>' : ""}${b.is_available_by_default ? ' <span class="tag">Par défaut</span>' : ""}<div class="colordesc">${esc(craftTxt(b.craft_time_seconds))}</div></td>
+      <td>${esc(b.output_type_label || b.output_type || "")}${b.output_grade ? " · grade " + esc(b.output_grade) : ""}</td>
+      <td class="muted" style="font-size:13px">${ings.length ? esc([...new Set(ings.map(i => i.name))].join(", ")) : "Recette non lue"}</td>
+      <td>${ings.length ? verdictCell(bpVerdict(b)) : ""}</td>
+      <td>${owners.includes(me) ? '<span class="tag">Moi</span> ' : ""}${owners.filter(o => o !== me).length ? `<span class="muted">${esc(owners.filter(o => o !== me).map(who).join(", "))}</span>` : ""}</td></tr>`;
+  }).join("");
+  $("#bpMoreBox").hidden = rows.length <= bp.shown;
+  $("#bpCount").textContent = `${page.length} sur ${rows.length}`;
+  renderBpDetail();
+  if (isAdmin() && bp.loaded) renderBpAdmin();
+}
+function renderBpDetail() {
+  const b = bp.list.find(x => x.id === bp.open);
+  $("#bpDetail").hidden = !b; if (!b) return;
+  const ings = bpIng(b), tiers = [...new Set(ings.map(i => i.tier_index))].sort((x, y) => x - y);
+  $("#bpTier").hidden = tiers.length < 2;
+  if (tiers.length > 1 && $("#bpTier").options.length !== tiers.length) $("#bpTier").innerHTML = tiers.map(t => `<option value="${t}">Palier ${t + 1}</option>`).join("");
+  const tier = tiers.length > 1 ? Number($("#bpTier").value) || 0 : (tiers[0] || 0);
+  const crafts = Math.max(1, Math.min(999, Math.floor(num($("#bpCrafts").value) || 1)));
+  const v = BlueprintLogic.compare(ings, bpStocks(), bp.map, { tier, crafts });
+  const max = v.craftable === null ? null : BlueprintLogic.maxCrafts(ings, bpStocks(), bp.map, { tier });
+  $("#bpTitle").textContent = b.output_name || b.key;
+  $("#bpMeta").innerHTML = `${esc(b.output_type_label || "")}${b.craft_time_seconds ? " · fabrication " + esc(craftTxt(b.craft_time_seconds)) : ""} · version ${esc(b.game_version || "?")} · <span class="num">${esc(b.key)}</span>${b.web_url ? ` · <a href="${esc(b.web_url)}" target="_blank" rel="noopener">fiche</a>` : ""}`;
+  $("#bpMine").checked = bpOwners(b).includes(st.me && st.me.id);
+  $("#bpVerdict").innerHTML = !ings.length ? "La recette n'a pas encore été lue : lance une synchronisation."
+    : v.craftable === true ? `<span class="bpok">Réalisable ×${crafts}</span> avec les stocks comparés${max ? ` · jusqu'à ${max === 999 ? "999 ou plus" : max} fabrication${max > 1 ? "s" : ""}` : ""}.`
+    : v.craftable === false ? `<span class="bpshort">Ressources manquantes pour ×${crafts}</span> : ${v.missing.filter(m => m.mapped).map(m => `${fmt(m.missing)} ${esc(m.unit || "objets")} de ${esc(m.name)}${m.min_quality ? " Q" + m.min_quality + "+" : ""}`).join(", ")}${v.missing.some(m => !m.mapped) ? ", plus des matières sans correspondance validée" : ""}.`
+    : `<span class="bpunk">Indéterminé</span> : ${v.missing.some(m => !m.mapped) || v.slots.some(s => s.options.some(o => o.status === "unmapped")) ? "certaines matières n'ont pas de correspondance validée avec le registre" : "l'API ne fournit pas toutes les données (quantité ou qualité minimale)"}.`;
+  const resName = id => (resOf(id) || {}).name || "?";
+  $("#bpIngBody").innerHTML = v.slots.map(s => s.options.map((o, k) => {
+    const mapRow = bp.maps.find(m => m.api_uuid === o.api_uuid);
+    const reg = o.resource_id ? esc(resName(o.resource_id)) : mapRow && mapRow.status === "suggested" ? `<span class="bpunk">À valider : ${esc(resName(mapRow.resource_id))}</span>` : '<span class="muted">Aucune</span>';
+    const st_ = o.status === "alternative" ? '<span class="muted">alternative</span>' : o.status === "ok" ? '<span class="bpok">0</span>'
+      : o.status === "short" ? `<span class="bpshort">${fmt(o.missing)}</span>` : o.status === "no_quantity" ? '<span class="bpunk">quantité inconnue</span>' : '<span class="bpunk">?</span>';
+    const avail = o.resource_id ? `${fmt(o.available_ok)}${o.available !== o.available_ok ? ` <span class="muted" title="Dont sous la qualité minimale ou de qualité inconnue">(${fmt(o.available)} au total${o.unknown_quality ? ", " + fmt(o.unknown_quality) + " de qualité inconnue" : ""})</span>` : ""}` : "";
+    return `<tr${o.status === "alternative" ? ' class="muted"' : ""}>
+      <td>${k === 0 ? esc(s.slot_name || s.slot_key) + (s.choice ? ` <span class="tag">au choix : ${s.pick} sur ${s.options.length}</span>` : "") : ""}</td>
+      <td>${esc(o.name)} <span class="muted">${o.kind === "item" ? "objet" : "raffiné"}</span></td>
+      <td class="num">${o.need_value == null ? "non fourni" : fmt(o.need_value) + " " + esc(o.unit || "objets")}</td>
+      <td class="num">${o.min_quality == null ? "non fournie" : o.min_quality}</td>
+      <td>${reg}</td><td class="num">${avail}</td><td class="num">${st_}</td></tr>`;
+  }).join("")).join("");
+  $("#bpNotes").textContent = "Disponible : quantité de qualité suffisante dans les stocks comparés (cSCU convertis en SCU : 100 cSCU = 1 SCU ; les objets ne sont jamais convertis). "
+    + "Une qualité inconnue ne compte que si aucune qualité minimale n'est demandée. Un même lot n'est jamais compté pour deux emplacements. Ce calcul ne retire rien des stocks.";
+}
+function renderBpAdmin() {
+  const used = new Map();
+  for (const b of bp.list) for (const i of bpIng(b)) { used.set(i.api_uuid, (used.get(i.api_uuid) || 0) + 1); if (i.ore_uuid) used.set(i.ore_uuid, used.get(i.ore_uuid) || 0); }
+  const f = $("#bpMapFilter").value;
+  const opts = st.resources.slice().sort(byName).map(r => `<option value="${esc(r.id)}">${esc(r.name)}</option>`).join("");
+  const rows = bp.mats.map(m => ({ m, mm: bp.maps.find(x => x.api_uuid === m.api_uuid) || { status: "unmatched" } }))
+    .filter(({ mm }) => f !== "todo" || ["suggested", "unmatched"].includes(mm.status))
+    .sort((a, b) => (used.get(b.m.api_uuid) || 0) - (used.get(a.m.api_uuid) || 0));
+  $("#bpMapBody").innerHTML = rows.map(({ m, mm }) => `<tr data-mat="${esc(m.api_uuid)}">
+      <td><strong>${esc(m.name)}</strong></td><td>${m.kind === "ore" ? "minerai brut" : m.kind === "item" ? "objet" : "ressource raffinée"}</td>
+      <td class="num">${used.get(m.api_uuid) || 0}</td>
+      <td><span class="tag${mm.status === "suggested" ? " warn" : ""}">${esc(BP_STATUS[mm.status] || mm.status)}</span>${mm.reason && mm.status !== "confirmed" ? `<div class="colordesc">${esc(mm.reason)}${mm.confidence ? ` (${Math.round(mm.confidence * 100)} %)` : ""}</div>` : ""}</td>
+      <td><select data-mapres aria-label="Ressource du registre pour ${esc(m.name)}"><option value="">—</option>${opts}</select></td>
+      <td style="white-space:nowrap"><button type="button" data-mapact="confirm">Valider</button> <button type="button" data-mapact="reject">Aucune</button>${mm.status === "confirmed" || mm.status === "rejected" ? ' <button type="button" data-mapact="reset">Réinitialiser</button>' : ""}</td></tr>`).join("")
+    || '<tr><td colspan="6" class="muted">Rien à traiter.</td></tr>';
+  for (const { m, mm } of rows) { const sel = document.querySelector(`tr[data-mat="${m.api_uuid}"] [data-mapres]`); if (sel && mm.resource_id) sel.value = mm.resource_id; }
+  $("#bpRuns").innerHTML = bp.runs.map(r => `<tr><td>${dateTxt(r.started_at)}</td><td>${r.trigger === "cron" ? "Automatique" : "Manuel" + (r.requested_by ? " (" + esc(who(r.requested_by)) + ")" : "")}</td>
+      <td><span class="tag${r.status === "success" ? "" : " warn"}">${esc({ success: "Réussie", partial: "Partielle", error: "Échec", running: "En cours" }[r.status] || r.status)}</span></td>
+      <td class="muted" style="font-size:13px">${r.stats ? esc(`${num(r.stats.listed)} listés · ${num(r.stats.to_fetch)} relus · ${num(r.stats.new_recipes)} nouvelles · ${num(r.stats.changed_recipes)} modifiées · ${num(r.stats.errors)} erreur(s)`) : ""}${r.error ? " · " + esc(r.error) : ""}</td></tr>`).join("")
+    || '<tr><td colspan="4" class="muted">Aucune synchronisation.</td></tr>';
+  $("#bpErrors").innerHTML = bp.errors.map(e => `<li><div><strong>${esc(e.context)}</strong> · ${esc(e.message)}</div><div class="meta">${ago(e.at)}</div></li>`).join("");
+}
+$("#bpQ").addEventListener("input", debounce(() => { bp.shown = 100; renderBlueprints(); }, 200));
+["#bpType", "#bpOwn"].forEach(s => $(s).addEventListener("change", () => { bp.shown = 100; renderBlueprints(); }));
+$("#bpMore").addEventListener("click", () => { bp.shown += 200; renderBlueprints(); });
+$("#bpBody").addEventListener("click", e => {
+  const r = e.target.closest("[data-bp]"); if (!r) return;
+  bp.open = Number(r.dataset.bp) === bp.open ? null : Number(r.dataset.bp);
+  $("#bpCrafts").value = 1; $("#bpTier").innerHTML = "";
+  renderBlueprints(); if (bp.open) $("#bpDetail").scrollIntoView({ block: "nearest" });
+});
+$("#bpClose").addEventListener("click", () => { bp.open = null; renderBlueprints(); });
+["#bpCrafts", "#bpTier"].forEach(s => $(s).addEventListener("input", renderBpDetail));
+$("#bpMine").addEventListener("change", async () => {
+  const b = bp.list.find(x => x.id === bp.open); if (!b) return;
+  $("#bpMine").disabled = true;
+  try { await rpc("set_member_blueprint", { p_blueprint: b.id, p_owned: $("#bpMine").checked, p_note: "", p_owner: null }); await loadBlueprints(); }
+  catch (err) { setStatus(errText(err)); $("#bpMine").checked = !$("#bpMine").checked; }
+  $("#bpMine").disabled = false;
+});
+$("#bpMapFilter").addEventListener("change", renderBpAdmin);
+$("#bpMapBody").addEventListener("click", async e => {
+  const b = e.target.closest("[data-mapact]"); if (!b) return;
+  const tr = b.closest("tr"), res = tr.querySelector("[data-mapres]").value || null;
+  b.disabled = true;
+  try { await rpc("sc_set_material_map", { p_uuid: tr.dataset.mat, p_action: b.dataset.mapact, p_resource: res }); setStatus(""); await loadBlueprints(); }
+  catch (err) { setStatus(errText(err)); b.disabled = false; }
+});
+$("#bpRefresh").addEventListener("click", async () => {
+  try { await rpc("sc_refresh_suggestions", {}); await loadBlueprints(); } catch (err) { setStatus(errText(err)); }
+});
+// Synchronisation manuelle : la fonction travaille par étapes d'environ 100 s ; on la relance jusqu'à la fin.
+$("#bpSyncGo").addEventListener("click", async () => {
+  const btn = $("#bpSyncGo"); btn.disabled = true;
+  try {
+    for (let i = 0; i < 40; i++) {
+      $("#bpSync").textContent = i ? "Synchronisation en cours… (étape " + (i + 1) + ")" : "Synchronisation en cours…";
+      const { data, error } = await sb.functions.invoke("sync-blueprints", { body: {} });
+      if (error) { let m = "La synchronisation a échoué."; try { const j = await error.context.json(); m = j.error || m; } catch (_) {} throw new Error(m); }
+      if (data.status === "busy") { $("#bpSync").textContent = "Une synchronisation est déjà en cours, nouvelle tentative dans 20 s…"; await new Promise(r => setTimeout(r, 20000)); continue; }
+      if (data.status !== "continue") { setStatus(data.status === "error" ? "Synchronisation en échec : " + (data.error || "") : ""); break; }
+      $("#bpSync").textContent = `Synchronisation en cours… ${data.pending} recette(s) restante(s)`;
+    }
+  } catch (err) { setStatus(errText(err)); }
+  btn.disabled = false;
+  await loadBlueprints();
+});
+
 // ---------- onglet Base de données (administrateurs) ----------
 function showTab(tab) {
   document.querySelectorAll("#appTabs button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
-  for (const v of ["mine", "req", "global", "stats", "img", "db"]) $("#" + v + "View").hidden = tab !== v;
+  for (const v of ["mine", "req", "global", "stats", "bp", "img", "db"]) $("#" + v + "View").hidden = tab !== v;
+  if (tab === "bp") { if (!bp.loaded) loadBlueprints(); renderBlueprints(); }
   if (tab === "img") renderImages();
   if (tab === "db") { renderDb(); if (!hist.loaded) loadHistory(true); }
   if (tab === "stats") loadStats();

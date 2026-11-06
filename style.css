@@ -90,7 +90,8 @@ tr:last-child td{border-bottom:0}
 
 /* stock */
 .main{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:20px;align-items:start}
-@media (max-width:1000px){.main{grid-template-columns:1fr}}
+@media (max-width:1000px){.main{grid-template-columns:minmax(0,1fr)}}
+.filters select,.filters input{max-width:100%}
 .filters{display:flex;flex-wrap:wrap;gap:8px}
 .filters input{width:200px}
 .res-name{font-weight:600}
@@ -174,7 +175,8 @@ img{max-width:100%}
 .pending-count{background:var(--crit);color:#fff;border-radius:999px;font:600 11px var(--f-mono);padding:1px 6px;margin-left:6px}
 
 /* onglets de l'application */
-.apptabs{display:flex;gap:4px;border-bottom:1px solid var(--line)}
+.apptabs{display:flex;gap:4px;border-bottom:1px solid var(--line);overflow-x:auto;scrollbar-width:thin;max-width:100%}
+.apptabs button{flex-shrink:0;white-space:nowrap}
 .apptabs button{border:0;border-bottom:2px solid transparent;border-radius:0;background:none;padding:10px 14px;color:var(--muted);font-family:var(--f-display);font-size:18px;font-weight:600}
 .apptabs button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--accent)}
 .view{display:flex;flex-direction:column;gap:20px}
@@ -288,3 +290,13 @@ tr.in-grp td:first-child{border-left:3px solid var(--accent)}
 button.stat.statlink{background:none;border:0;padding:0;text-align:left;cursor:pointer;color:inherit;min-height:0;align-items:flex-start}
 button.stat.statlink:hover span{color:var(--accent)}
 .stat.alert b{color:var(--crit)}
+/* Mouvement déclaré : aperçu avant confirmation */
+.mvpreview{border:1px solid var(--accent);border-radius:var(--r);padding:10px 12px;display:flex;flex-direction:column;gap:8px;background:var(--soft)}
+.mvpreview .big{font:600 18px/1.3 var(--f-mono);font-variant-numeric:tabular-nums}
+.chip.pick{cursor:pointer;border:1px solid var(--line);background:var(--panel);padding:3px 9px}
+.chip.pick:hover{border-color:var(--accent)}
+.revbox{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:4px}
+.revbox input{flex:1;min-width:140px}
+.log li.undone{opacity:.65}
+#bpCrafts{width:72px}
+.bpok{color:var(--ok);font-weight:600}.bpshort{color:var(--crit);font-weight:600}.bpunk{color:var(--warn);font-weight:600}

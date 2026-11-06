@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="style.css?v=24">
+<link rel="stylesheet" href="style.css?v=25">
 </head>
 <body>
 
@@ -97,6 +97,7 @@
     <button type="button" role="tab" data-tab="req" aria-selected="false" id="tabReq" hidden>Demandes<span class="pending-count" id="reqCount" hidden></span></button>
     <button type="button" role="tab" data-tab="global" aria-selected="false" id="tabGlobal">Inventaire global</button>
     <button type="button" role="tab" data-tab="stats" aria-selected="false">Contributions</button>
+    <button type="button" role="tab" data-tab="bp" aria-selected="false" id="tabBp">Blueprints</button>
     <button type="button" role="tab" data-tab="img" aria-selected="false" id="tabImg" hidden>Images</button>
     <button type="button" role="tab" data-tab="db" aria-selected="false" id="tabDb" hidden>Base de données</button>
   </nav>
@@ -201,6 +202,7 @@
           <button class="primary" id="commit">Enregistrer</button>
           <button type="button" id="diffBack">Revenir à la lecture</button>
           <button type="button" class="danger" id="forceStale" hidden>Appliquer quand même</button>
+          <button type="button" class="danger" id="forceDup" hidden>C'est un nouveau lot : l'ajouter</button>
           <label class="perm" title="Une vignette par minerai et par écran (inventaire, ascenseur de fret, ASOP), tant que ce minerai en a moins de 5 pour cet écran"><input type="checkbox" id="capLearn" checked> Ajouter les vignettes vérifiées à la bibliothèque d'images</label>
           <span class="muted" id="commitMsg" style="font-size:14px"></span>
         </div>
@@ -227,16 +229,30 @@
       <div class="empty" id="mineEmpty"><strong>Aucun stock enregistré</strong><span>Capture ton inventaire ci-dessus : le premier relevé d'un lieu sert de point de départ.</span></div>
       <form class="panel-b moveform" id="moveForm">
         <h3 style="margin:0">Déclarer un mouvement</h3>
+        <div class="seg" role="radiogroup" aria-label="Type de mouvement">
+          <label><input type="radio" name="mvType" value="remove" checked> Retirer</label>
+          <label><input type="radio" name="mvType" value="add"> Ajouter</label>
+          <label><input type="radio" name="mvType" value="transfer"> Transférer</label>
+          <label><input type="radio" name="mvType" value="set"> Corriger</label>
+        </div>
         <div class="moverow">
           <label>Ressource<select id="mvRes" required></select></label>
-          <label>Lieu<input type="text" id="mvPlace" list="placeList" maxlength="80" required autocomplete="off"></label>
+          <label><span id="mvPlaceLbl">Lieu</span><input type="text" id="mvPlace" list="placeList" maxlength="80" required autocomplete="off"></label>
           <label>Qualité<input type="number" id="mvQ" min="0" max="1000" step="1" placeholder="?"></label>
-          <label>Quantité<input type="number" id="mvQty" min="0" step="any" required></label>
           <label>Unité<input type="text" id="mvUnit" list="unitList" maxlength="20" placeholder="objets (20x)"></label>
-          <label>Nature<select id="mvKind"></select></label>
+          <label>Quantité<input type="number" id="mvQty" min="0" step="any" required></label>
+          <label id="mvKindBox">Motif<select id="mvKind"></select></label>
+          <label id="mvToPlaceBox" hidden>Vers le lieu<input type="text" id="mvToPlace" list="placeList" maxlength="80" autocomplete="off"></label>
+          <label id="mvToOwnerBox" hidden>Vers le membre<select id="mvToOwner"></select></label>
         </div>
-        <label>Motif ou note<input type="text" id="mvNote" maxlength="300" placeholder="Obligatoire pour une correction"></label>
-        <div class="row"><button class="primary" type="submit" id="mvGo">Enregistrer le mouvement</button><span class="formmsg" id="mvMsg"></span></div>
+        <div class="chips" id="mvLots" aria-label="Lots disponibles à ce lieu"></div>
+        <label>Note<input type="text" id="mvNote" maxlength="300" placeholder="Facultative (obligatoire pour une correction)"></label>
+        <div class="row"><button class="primary" type="submit" id="mvGo">Vérifier</button><span class="formmsg" id="mvMsg"></span></div>
+        <div class="mvpreview" id="mvPreview" hidden>
+          <div id="mvPreviewText"></div>
+          <div class="formmsg err" id="mvWarn" hidden></div>
+          <div class="row"><button type="button" class="primary" id="mvConfirm">Confirmer</button><button type="button" id="mvEdit">Modifier</button></div>
+        </div>
       </form>
     </section>
 
@@ -385,6 +401,85 @@
   </div>
 
   <!-- ===== Bibliothèque d'images ===== -->
+  <!-- ===== Blueprints (catalogue de l'API Star Citizen Wiki) ===== -->
+  <div class="view" id="bpView" hidden>
+    <section class="panel">
+      <div class="panel-h">
+        <div>
+          <h2>Blueprints</h2>
+          <div class="muted" style="font-size:14px" id="bpSync">Catalogue de l'API Star Citizen Wiki.</div>
+        </div>
+        <div class="filters">
+          <input type="search" id="bpQ" placeholder="Rechercher un objet, un ingrédient…" aria-label="Rechercher un blueprint">
+          <select id="bpType" aria-label="Type d'objet"><option value="">Tous les types</option></select>
+          <select id="bpOwn" aria-label="Possession">
+            <option value="">Tout le catalogue</option>
+            <option value="me">Mes blueprints</option>
+            <option value="org">Possédés dans l'organisation</option>
+            <option value="ok">Réalisables avec les stocks</option>
+          </select>
+          <button type="button" id="bpSyncGo" hidden>Synchroniser maintenant</button>
+        </div>
+      </div>
+      <div class="panel-b muted" id="bpScope" style="font-size:13px"></div>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Objet</th><th>Type</th><th>Ingrédients</th><th>Stocks</th><th>Possédé par</th></tr></thead>
+          <tbody id="bpBody"></tbody>
+        </table>
+      </div>
+      <div class="empty" id="bpEmpty"><strong>Aucun blueprint</strong><span id="bpEmptyTxt">Le catalogue apparaîtra après la première synchronisation.</span></div>
+      <div class="row panel-b" id="bpMoreBox" hidden><button type="button" id="bpMore">Afficher plus</button><span class="muted" id="bpCount"></span></div>
+    </section>
+
+    <section class="panel" id="bpDetail" hidden>
+      <div class="panel-h">
+        <div>
+          <h2 id="bpTitle"></h2>
+          <div class="muted" style="font-size:14px" id="bpMeta"></div>
+        </div>
+        <div class="filters">
+          <label class="perm"><input type="checkbox" id="bpMine"> Je possède ce blueprint</label>
+          <label style="flex-direction:row;align-items:center;gap:6px">Fabrications<input type="number" id="bpCrafts" min="1" max="999" step="1" value="1" class="qin" aria-label="Nombre de fabrications"></label>
+          <select id="bpTier" aria-label="Palier" hidden></select>
+          <button type="button" id="bpClose">Fermer</button>
+        </div>
+      </div>
+      <div class="panel-b" id="bpVerdict"></div>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Emplacement</th><th>Matière</th><th class="num">Requis</th><th class="num">Q min</th><th>Ressource du registre</th><th class="num">Disponible</th><th class="num">Manquant</th></tr></thead>
+          <tbody id="bpIngBody"></tbody>
+        </table>
+      </div>
+      <div class="panel-b muted" style="font-size:13px" id="bpNotes"></div>
+    </section>
+
+    <section class="panel" id="bpAdmin" hidden>
+      <div class="panel-h">
+        <div>
+          <h2>Correspondances avec le registre</h2>
+          <div class="muted" style="font-size:14px">Seules les correspondances validées servent au calcul. Les suggestions automatiques (même nom, nom français) attendent ta validation. Attention : le blueprint demande la ressource <strong>raffinée</strong> ; le minerai brut est une autre matière.</div>
+        </div>
+        <div class="filters"><select id="bpMapFilter" aria-label="Filtrer les correspondances"><option value="todo">À traiter</option><option value="">Toutes</option></select><button type="button" id="bpRefresh">Recalculer les suggestions</button></div>
+      </div>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Matière (API)</th><th>Type</th><th>Utilisée dans</th><th>État</th><th>Ressource du registre</th><th></th></tr></thead>
+          <tbody id="bpMapBody"></tbody>
+        </table>
+      </div>
+      <div class="panel-h" style="border-top:1px solid var(--line)"><h2>Dernières synchronisations</h2></div>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Début</th><th>Déclenchement</th><th>Résultat</th><th>Détail</th></tr></thead>
+          <tbody id="bpRuns"></tbody>
+        </table>
+      </div>
+      <ul class="log panel-b" id="bpErrors"></ul>
+    </section>
+  </div>
+
   <div class="view" id="imgView" hidden>
     <section class="panel">
       <div class="panel-h">
@@ -579,8 +674,9 @@
 </dialog>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-<script src="config.js?v=24"></script>
-<script src="scanlogic.js?v=24"></script>
-<script src="app.js?v=24"></script>
+<script src="config.js?v=25"></script>
+<script src="scanlogic.js?v=25"></script>
+<script src="blueprintlogic.js?v=25"></script>
+<script src="app.js?v=25"></script>
 </body>
 </html>
