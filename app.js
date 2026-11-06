@@ -1777,7 +1777,10 @@ function syncLine() {
   const res = { success: "réussie", partial: "partielle (voir les erreurs)", error: "en échec", running: "en cours" }[r.status] || r.status;
   const ver = (bp.list.find(b => !b.missing_since) || {}).game_version;
   return `Catalogue de l'API Star Citizen Wiki${ver ? " · jeu " + ver : ""} · dernière synchronisation ${dateTxt(r.finished_at || r.started_at)} : ${res}`
-    + (r.stats && r.stats.listed ? ` · ${r.stats.listed} blueprints, ${num(r.stats.new_recipes)} recette(s) nouvelle(s), ${num(r.stats.changed_recipes)} modifiée(s)` : "");
+    + ` · ${bp.list.filter(b => !b.missing_since).length} blueprints dans le catalogue`
+    + (r.stats && r.stats.listed ? (num(r.stats.new_recipes) || num(r.stats.changed_recipes)
+      ? ` (${num(r.stats.new_recipes)} recette(s) ajoutée(s), ${num(r.stats.changed_recipes)} modifiée(s))`
+      : " (déjà à jour : aucune recette n'a changé dans l'API)") : "");
 }
 function renderBlueprints() {
   if ($("#bpView").hidden) return;
@@ -1792,7 +1795,15 @@ function renderBlueprints() {
   $("#bpScope").textContent = bp.loaded ? (bpStockScope() === "org"
     ? "Comparaison avec les stocks de tous les membres de l'organisation, tous lieux confondus. Rien n'est retiré des stocks."
     : "Comparaison avec tes stocks seulement, tous lieux confondus. Rien n'est retiré des stocks.")
-    + (Object.keys(bp.map).length ? "" : " Aucune correspondance matière ↔ ressource n'est encore validée : un administrateur doit les valider ci-dessous.") : "";
+    : "";
+  const sugg = bp.maps.filter(m => m.status === "suggested" && m.resource_id);
+  const todo = bp.loaded && sugg.length > 0;
+  $("#bpTodo").hidden = !todo;
+  if (todo) $("#bpTodo").innerHTML = isAdmin()
+    ? `<div><strong>${sugg.length} correspondance${sugg.length > 1 ? "s" : ""} à valider.</strong> Tant qu'une matière n'est pas reliée à une ressource du registre, ses blueprints restent « indéterminés ». Vérifie la liste puis valide-la en un clic, ou une par une plus bas.</div>
+       <div class="muted" style="font-size:13px">${sugg.map(m => `${esc((bp.mats.find(x => x.api_uuid === m.api_uuid) || {}).name || "?")} → ${esc((resOf(m.resource_id) || {}).name || "?")}`).join(" · ")}</div>
+       <div class="row"><button type="button" class="primary" data-confirmall>Valider ces ${sugg.length} correspondance${sugg.length > 1 ? "s" : ""}</button><button type="button" data-gomap>Voir le détail</button></div>`
+    : `<div>Certaines matières ne sont pas encore reliées aux ressources du registre : les blueprints concernés restent « indéterminés » jusqu'à la validation par un administrateur.</div>`;
   const types = [...new Set(bp.list.map(b => b.output_type_label || b.output_type).filter(Boolean))].sort();
   const tSel = $("#bpType"), tCur = tSel.value;
   tSel.innerHTML = '<option value="">Tous les types</option>' + types.map(t => `<option>${esc(t)}</option>`).join("");
@@ -1844,7 +1855,9 @@ function renderBpDetail() {
   const resName = id => (resOf(id) || {}).name || "?";
   $("#bpIngBody").innerHTML = v.slots.map(s => s.options.map((o, k) => {
     const mapRow = bp.maps.find(m => m.api_uuid === o.api_uuid);
-    const reg = o.resource_id ? esc(resName(o.resource_id)) : mapRow && mapRow.status === "suggested" ? `<span class="bpunk">À valider : ${esc(resName(mapRow.resource_id))}</span>` : '<span class="muted">Aucune</span>';
+    const reg = o.resource_id ? esc(resName(o.resource_id)) : mapRow && mapRow.status === "suggested" && mapRow.resource_id
+      ? `<span class="bpunk">À valider : ${esc(resName(mapRow.resource_id))}</span>${isAdmin() ? ` <button type="button" class="linkbtn" data-okmap="${esc(o.api_uuid)}" data-res="${esc(mapRow.resource_id)}">Valider</button>` : ""}`
+      : `<span class="muted">Aucune</span>${isAdmin() ? ' <button type="button" class="linkbtn" data-gomap>Choisir…</button>' : ""}`;
     const st_ = o.status === "alternative" ? '<span class="muted">alternative</span>' : o.status === "ok" ? '<span class="bpok">0</span>'
       : o.status === "short" ? `<span class="bpshort">${fmt(o.missing)}</span>` : o.status === "no_quantity" ? '<span class="bpunk">quantité inconnue</span>' : '<span class="bpunk">?</span>';
     const avail = o.resource_id ? `${fmt(o.available_ok)}${o.available !== o.available_ok ? ` <span class="muted" title="Dont sous la qualité minimale ou de qualité inconnue">(${fmt(o.available)} au total${o.unknown_quality ? ", " + fmt(o.unknown_quality) + " de qualité inconnue" : ""})</span>` : ""}` : "";
@@ -1866,6 +1879,9 @@ function renderBpAdmin() {
   const rows = bp.mats.map(m => ({ m, mm: bp.maps.find(x => x.api_uuid === m.api_uuid) || { status: "unmatched" } }))
     .filter(({ mm }) => f !== "todo" || ["suggested", "unmatched"].includes(mm.status))
     .sort((a, b) => (used.get(b.m.api_uuid) || 0) - (used.get(a.m.api_uuid) || 0));
+  const nSugg = bp.maps.filter(m => m.status === "suggested" && m.resource_id).length;
+  $("#bpConfirmAll").hidden = !nSugg;
+  $("#bpConfirmAll").textContent = `Valider les ${nSugg} suggestion${nSugg > 1 ? "s" : ""}`;
   $("#bpMapBody").innerHTML = rows.map(({ m, mm }) => `<tr data-mat="${esc(m.api_uuid)}">
       <td><strong>${esc(m.name)}</strong></td><td>${m.kind === "ore" ? "minerai brut" : m.kind === "item" ? "objet" : "ressource raffinée"}</td>
       <td class="num">${used.get(m.api_uuid) || 0}</td>
@@ -1899,6 +1915,23 @@ $("#bpMine").addEventListener("change", async () => {
   $("#bpMine").disabled = false;
 });
 $("#bpMapFilter").addEventListener("change", renderBpAdmin);
+// Validation des correspondances suggérées (chacune passe par sc_set_material_map, réservée aux administrateurs).
+async function confirmMaps(list, btn) {
+  if (btn) btn.disabled = true;
+  let ok = 0; const errs = [];
+  for (const m of list) {
+    try { await rpc("sc_set_material_map", { p_uuid: m.api_uuid, p_action: "confirm", p_resource: m.resource_id }); ok++; }
+    catch (err) { errs.push(((bp.mats.find(x => x.api_uuid === m.api_uuid) || {}).name || "?") + " : " + errText(err)); }
+  }
+  setStatus(errs.length ? `${ok} correspondance(s) validée(s). Non validées : ${errs.join(" ; ")}` : "");
+  await loadBlueprints();
+}
+document.addEventListener("click", e => {
+  const all = e.target.closest("[data-confirmall], #bpConfirmAll"), one = e.target.closest("[data-okmap]"), go = e.target.closest("[data-gomap]");
+  if (all && !$("#bpView").hidden) confirmMaps(bp.maps.filter(m => m.status === "suggested" && m.resource_id), all);
+  else if (one) confirmMaps([{ api_uuid: one.dataset.okmap, resource_id: one.dataset.res }], one);
+  else if (go) { $("#bpMapFilter").value = "todo"; renderBpAdmin(); $("#bpAdmin").scrollIntoView({ block: "start" }); }
+});
 $("#bpMapBody").addEventListener("click", async e => {
   const b = e.target.closest("[data-mapact]"); if (!b) return;
   const tr = b.closest("tr"), res = tr.querySelector("[data-mapres]").value || null;

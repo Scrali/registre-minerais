@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="style.css?v=25">
+<link rel="stylesheet" href="style.css?v=26">
 </head>
 <body>
 
@@ -422,6 +422,7 @@
         </div>
       </div>
       <div class="panel-b muted" id="bpScope" style="font-size:13px"></div>
+      <div class="panel-b mvpreview" id="bpTodo" hidden></div>
       <div class="scroll">
         <table>
           <thead><tr><th>Objet</th><th>Type</th><th>Ingrédients</th><th>Stocks</th><th>Possédé par</th></tr></thead>
@@ -461,7 +462,7 @@
           <h2>Correspondances avec le registre</h2>
           <div class="muted" style="font-size:14px">Seules les correspondances validées servent au calcul. Les suggestions automatiques (même nom, nom français) attendent ta validation. Attention : le blueprint demande la ressource <strong>raffinée</strong> ; le minerai brut est une autre matière.</div>
         </div>
-        <div class="filters"><select id="bpMapFilter" aria-label="Filtrer les correspondances"><option value="todo">À traiter</option><option value="">Toutes</option></select><button type="button" id="bpRefresh">Recalculer les suggestions</button></div>
+        <div class="filters"><select id="bpMapFilter" aria-label="Filtrer les correspondances"><option value="todo">À traiter</option><option value="">Toutes</option></select><button type="button" class="primary" id="bpConfirmAll" hidden></button><button type="button" id="bpRefresh">Recalculer les suggestions</button></div>
       </div>
       <div class="scroll">
         <table>
@@ -674,9 +675,9 @@
 </dialog>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-<script src="config.js?v=25"></script>
-<script src="scanlogic.js?v=25"></script>
-<script src="blueprintlogic.js?v=25"></script>
-<script src="app.js?v=25"></script>
+<script src="config.js?v=26"></script>
+<script src="scanlogic.js?v=26"></script>
+<script src="blueprintlogic.js?v=26"></script>
+<script src="app.js?v=26"></script>
 </body>
 </html>
