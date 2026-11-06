@@ -13,7 +13,7 @@ const scan = (user, location, items, extra = {}) =>
     coverage: "partial", items, ...extra }), false]);
 const preview = (user, location, items, extra = {}) =>
   rpc(db, user, "apply_scan", [JSON.stringify({ location, coverage: "partial", items, ...extra }), true]);
-const adjust = (user, p) => rpc(db, user, "adjust_stock", [JSON.stringify(p)]);
+const adjust = (user, p) => rpc(db, user, "adjust_stock", [JSON.stringify({ operation_id: randomUUID(), ...p })]);
 const line = (resource_id, quality_key, quantity, unit = "") => ({ resource_id, quality_key, quantity, unit });
 async function stock(user, location, res, q = "258", unit = "") {
   const r = await db.query(

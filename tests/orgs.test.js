@@ -1,6 +1,7 @@
 // Tests des organisations (registres séparés) et des droits par membre (migration 008).
 import { test, before } from "node:test";
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { freshDb, runRemaining, addUser, rpc, as } from "./harness.js";
 
 const rejects = (p, re) => assert.rejects(p, e => { assert.match(e.message, re); return true; });
@@ -55,7 +56,7 @@ test("Droit « voir l'inventaire global » retiré : seulement son propre stock"
 });
 
 test("Modifier l'inventaire d'un autre : droit requis, et jamais hors de son organisation", async () => {
-  const p = owner => J({ owner_id: owner, location: "Levski", resource_id: res, quality_key: "600", unit: "", mode: "add", quantity: 1, kind: "deposit", note: "test" });
+  const p = owner => J({ operation_id: randomUUID(), owner_id: owner, location: "Levski", resource_id: res, quality_key: "600", unit: "", mode: "add", quantity: 1, kind: "deposit", note: "test" });
   await rejects(rpc(db, sard2, "adjust_stock", [p(sard1)]), /propre inventaire/);
   await db.query(`update profiles set can_edit_others = true where id = $1`, [sard2]);
   await rpc(db, sard2, "adjust_stock", [p(sard1)]);

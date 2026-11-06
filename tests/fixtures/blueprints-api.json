@@ -1,0 +1,1458 @@
+{
+ "source": "https://api.star-citizen.wiki (récupéré le 2026-11-06)",
+ "versions": [
+  {
+   "code": "4.10.2-LIVE.12881860",
+   "channel": "live",
+   "released_at": "2026-10-09T00:00:00+00:00",
+   "is_default": true
+  },
+  {
+   "code": "4.10.1-LIVE.12660092",
+   "channel": "live",
+   "released_at": "2026-09-16T00:00:00+00:00",
+   "is_default": false
+  },
+  {
+   "code": "4.10.0-LIVE.12519617",
+   "channel": "live",
+   "released_at": "2026-08-26T00:00:00+00:00",
+   "is_default": false
+  }
+ ],
+ "list": [
+  {
+   "uuid": "280f47b7-8434-410c-b854-380768fdccec",
+   "key": "BP_CRAFT_AMRS_LaserCannon_S1",
+   "category_uuid": "61e576d2-f8b4-46b1-98e6-9205bb5de686",
+   "output_item_uuid": "26838ca7-418a-47d2-8429-7339ebbb8993",
+   "output_name": "Omnisky III Cannon",
+   "output_class": "amrs_lasercannon_s1",
+   "craft_time_seconds": 540,
+   "craft_time_label": "9 minutes",
+   "is_available_by_default": false,
+   "game_version": "4.10.2-LIVE.12881860",
+   "ingredient_count": 3,
+   "unlocking_missions_count": 1,
+   "ingredients": [
+    {
+     "name": "Agricium",
+     "kind": "resource",
+     "resource_type_uuid": "dc6fbcbb-5990-4ed5-82ee-93152dab7845",
+     "item_uuid": null,
+     "quantity_scu": 0.36,
+     "quantity": null,
+     "link": "https://api.star-citizen.wiki/api/commodities/fc1ec740-3047-48d8-81f0-396f4c9a90ef",
+     "web_url": "https://api.star-citizen.wiki/commodities/fc1ec740-3047-48d8-81f0-396f4c9a90ef"
+    },
+    {
+     "name": "Hadanite",
+     "kind": "item",
+     "resource_type_uuid": null,
+     "item_uuid": "125dd723-95ad-488d-830f-62c954445ca1",
+     "quantity_scu": null,
+     "quantity": 7,
+     "link": "https://api.star-citizen.wiki/api/items/125dd723-95ad-488d-830f-62c954445ca1",
+     "web_url": "https://api.star-citizen.wiki/items/125dd723-95ad-488d-830f-62c954445ca1"
+    },
+    {
+     "name": "Dolivine",
+     "kind": "item",
+     "resource_type_uuid": null,
+     "item_uuid": "20094ded-ad04-46a3-b734-9e37aa3154b3",
+     "quantity_scu": null,
+     "quantity": 7,
+     "link": "https://api.star-citizen.wiki/api/items/20094ded-ad04-46a3-b734-9e37aa3154b3",
+     "web_url": "https://api.star-citizen.wiki/items/20094ded-ad04-46a3-b734-9e37aa3154b3"
+    }
+   ],
+   "dismantle_returns": [
+    {
+     "name": "Agricium",
+     "resource_type_uuid": "dc6fbcbb-5990-4ed5-82ee-93152dab7845",
+     "quantity_scu": 0.18,
+     "link": "https://api.star-citizen.wiki/api/commodities/dc6fbcbb-5990-4ed5-82ee-93152dab7845",
+     "web_url": "https://api.star-citizen.wiki/commodities/dc6fbcbb-5990-4ed5-82ee-93152dab7845"
+    }
+   ],
+   "output": {
+    "uuid": "26838ca7-418a-47d2-8429-7339ebbb8993",
+    "name": "Omnisky III Cannon",
+    "class": "amrs_lasercannon_s1",
+    "type": "WeaponGun",
+    "type_label": "Weapon Gun",
+    "sub_type": "Gun",
+    "subtype": "Gun",
+    "grade": "1",
+    "item_web_url": "https://api.star-citizen.wiki/items/26838ca7-418a-47d2-8429-7339ebbb8993"
+   },
+   "web_url": "https://api.star-citizen.wiki/blueprints/omnisky-iii-cannon",
+   "output_item_web_url": "https://api.star-citizen.wiki/items/26838ca7-418a-47d2-8429-7339ebbb8993",
+   "link": "https://api.star-citizen.wiki/api/blueprints/280f47b7-8434-410c-b854-380768fdccec"
+  },
+  {
+   "uuid": "c9c67e69-063a-4d28-a156-d5809776ee22",
+   "key": "BP_CRAFT_Carryable_2H_CY_CollectorMaterial_001",
+   "category_uuid": "7a141fa2-f4cb-4ae9-83fb-74251f0ca718",
+   "output_item_uuid": "905ba346-0202-4ee4-853e-cfdb2350b195",
+   "output_name": "Metamaterial Test #146",
+   "output_class": "carryable_2h_cy_collectormaterial_001",
+   "craft_time_seconds": 70,
+   "craft_time_label": "1 minute 10 seconds",
+   "is_available_by_default": false,
+   "game_version": "4.10.2-LIVE.12881860",
+   "ingredient_count": 3,
+   "unlocking_missions_count": 1,
+   "ingredients": [
+    {
+     "name": "Titanium",
+     "kind": "resource",
+     "resource_type_uuid": "07570c9f-fdf6-4bca-a56b-c42809ec0e01",
+     "item_uuid": null,
+     "quantity_scu": 2,
+     "quantity": null,
+     "link": "https://api.star-citizen.wiki/api/commodities/64978449-1d87-4a16-ba55-4b5f94fee217",
+     "web_url": "https://api.star-citizen.wiki/commodities/64978449-1d87-4a16-ba55-4b5f94fee217"
+    },
+    {
+     "name": "Riccite",
+     "kind": "resource",
+     "resource_type_uuid": "86d00bd8-08f7-4231-b375-a609803fc46d",
+     "item_uuid": null,
+     "quantity_scu": 2,
+     "quantity": null,
+     "link": "https://api.star-citizen.wiki/api/commodities/c3697191-8ad0-43a9-af7a-29c0ad58de34",
+     "web_url": "https://api.star-citizen.wiki/commodities/c3697191-8ad0-43a9-af7a-29c0ad58de34"
+    },
+    {
+     "name": "Yormandi Eye",
+     "kind": "item",
+     "resource_type_uuid": null,
+     "item_uuid": "124da32f-de8f-45f6-a2f1-81fd47752b2d",
+     "quantity_scu": null,
+     "quantity": 4,
+     "link": "https://api.star-citizen.wiki/api/items/124da32f-de8f-45f6-a2f1-81fd47752b2d",
+     "web_url": "https://api.star-citizen.wiki/items/124da32f-de8f-45f6-a2f1-81fd47752b2d"
+    }
+   ],
+   "dismantle_returns": [
+    {
+     "name": "Titanium",
+     "resource_type_uuid": "07570c9f-fdf6-4bca-a56b-c42809ec0e01",
+     "quantity_scu": 1,
+     "link": "https://api.star-citizen.wiki/api/commodities/07570c9f-fdf6-4bca-a56b-c42809ec0e01",
+     "web_url": "https://api.star-citizen.wiki/commodities/07570c9f-fdf6-4bca-a56b-c42809ec0e01"
+    }
+   ],
+   "output": {
+    "uuid": "905ba346-0202-4ee4-853e-cfdb2350b195",
+    "name": "Metamaterial Test #146",
+    "class": "carryable_2h_cy_collectormaterial_001",
+    "type": "Misc",
+    "type_label": "Misc",
+    "sub_type": "UNDEFINED",
+    "subtype": "UNDEFINED",
+    "grade": "1",
+    "item_web_url": "https://api.star-citizen.wiki/items/905ba346-0202-4ee4-853e-cfdb2350b195"
+   },
+   "web_url": "https://api.star-citizen.wiki/blueprints/metamaterial-test-146",
+   "output_item_web_url": "https://api.star-citizen.wiki/items/905ba346-0202-4ee4-853e-cfdb2350b195",
+   "link": "https://api.star-citizen.wiki/api/blueprints/c9c67e69-063a-4d28-a156-d5809776ee22"
+  },
+  {
+   "uuid": "31b2edb4-1b3d-4073-81a4-c0d1572a9a42",
+   "key": "BP_CRAFT_COOL_ACOM_S01_QuickCool_SCItem",
+   "category_uuid": "7648457f-7f20-4f71-a10f-045ddcb65a31",
+   "output_item_uuid": "34334a56-0045-40e5-b573-5891e8e2dbbf",
+   "output_name": "QuikCool",
+   "output_class": "cool_acom_s01_quickcool_scitem",
+   "craft_time_seconds": 450,
+   "craft_time_label": "7 minutes 30 seconds",
+   "is_available_by_default": false,
+   "game_version": "4.10.2-LIVE.12881860",
+   "ingredient_count": 3,
+   "unlocking_missions_count": 0,
+   "ingredients": [
+    {
+     "name": "Iron",
+     "kind": "resource",
+     "resource_type_uuid": "f386a33c-ac9a-400a-a7b8-fe1fc7c8d270",
+     "item_uuid": null,
+     "quantity_scu": 0.26,
+     "quantity": null,
+     "link": "https://api.star-citizen.wiki/api/commodities/32c57a12-5de5-49b1-827a-9fd80278fbc4",
+     "web_url": "https://api.star-citizen.wiki/commodities/32c57a12-5de5-49b1-827a-9fd80278fbc4"
+    },
+    {
+     "name": "Pressurized Ice",
+     "kind": "resource",
+     "resource_type_uuid": "f9f3251a-8e48-408a-b957-f1e3d5d3e213",
+     "item_uuid": null,
+     "quantity_scu": 0.16,
+     "quantity": null,
+     "link": "https://api.star-citizen.wiki/api/commodities/d9653427-af7f-4fea-bbd6-ae89393524b7",
+     "web_url": "https://api.star-citizen.wiki/commodities/d9653427-af7f-4fea-bbd6-ae89393524b7"
+    }
+   ],
+   "dismantle_returns": [
+    {
+     "name": "Iron",
+     "resource_type_uuid": "f386a33c-ac9a-400a-a7b8-fe1fc7c8d270",
+     "quantity_scu": 0.05,
+     "link": "https://api.star-citizen.wiki/api/commodities/f386a33c-ac9a-400a-a7b8-fe1fc7c8d270",
+     "web_url": "https://api.star-citizen.wiki/commodities/f386a33c-ac9a-400a-a7b8-fe1fc7c8d270"
+    },
+    {
+     "name": "Pressurized Ice",
+     "resource_type_uuid": "f9f3251a-8e48-408a-b957-f1e3d5d3e213",
+     "quantity_scu": 0.08,
+     "link": "https://api.star-citizen.wiki/api/commodities/f9f3251a-8e48-408a-b957-f1e3d5d3e213",
+     "web_url": "https://api.star-citizen.wiki/commodities/f9f3251a-8e48-408a-b957-f1e3d5d3e213"
+    }
+   ],
+   "output": {
+    "uuid": "34334a56-0045-40e5-b573-5891e8e2dbbf",
+    "name": "QuikCool",
+    "class": "cool_acom_s01_quickcool_scitem",
+    "type": "Cooler",
+    "type_label": "Cooler",
+    "sub_type": "UNDEFINED",
+    "subtype": "UNDEFINED",
+    "grade": "4",
+    "item_web_url": "https://api.star-citizen.wiki/items/34334a56-0045-40e5-b573-5891e8e2dbbf"
+   },
+   "web_url": "https://api.star-citizen.wiki/blueprints/quikcool",
+   "output_item_web_url": "https://api.star-citizen.wiki/items/34334a56-0045-40e5-b573-5891e8e2dbbf",
+   "link": "https://api.star-citizen.wiki/api/blueprints/31b2edb4-1b3d-4073-81a4-c0d1572a9a42"
+  },
+  {
+   "uuid": "e3097998-28ef-48ad-a220-2ddaa1a85ce3",
+   "key": "BP_CRAFT_none_rifle_multi_01",
+   "category_uuid": "f9ccf95d-ad0e-4c33-97e0-e56c847a7e37",
+   "output_item_uuid": "c098e722-902a-435b-83f8-a96cec36a012",
+   "output_name": "Killshot Rifle",
+   "output_class": "none_rifle_multi_01",
+   "craft_time_seconds": 150,
+   "craft_time_label": "2 minutes 30 seconds",
+   "is_available_by_default": false,
+   "game_version": "4.10.2-LIVE.12881860",
+   "ingredient_count": 3,
+   "unlocking_missions_count": 3,
+   "ingredients": [
+    {
+     "name": "Iron",
+     "kind": "resource",
+     "resource_type_uuid": "f386a33c-ac9a-400a-a7b8-fe1fc7c8d270",
+     "item_uuid": null,
+     "quantity_scu": 0.06,
+     "quantity": null,
+     "link": "https://api.star-citizen.wiki/api/commodities/32c57a12-5de5-49b1-827a-9fd80278fbc4",
+     "web_url": "https://api.star-citizen.wiki/commodities/32c57a12-5de5-49b1-827a-9fd80278fbc4"
+    },
+    {
+     "name": "Hephaestanite",
+     "kind": "resource",
+     "resource_type_uuid": "61189578-ed7a-4491-9774-37ae2f82b8b0",
+     "item_uuid": null,
+     "quantity_scu": 0.02,
+     "quantity": null,
+     "link": "https://api.star-citizen.wiki/api/commodities/cad319d9-e0e5-420d-bbfd-dd62a0362d05",
+     "web_url": "https://api.star-citizen.wiki/commodities/cad319d9-e0e5-420d-bbfd-dd62a0362d05"
+    }
+   ],
+   "dismantle_returns": [
+    {
+     "name": "Iron",
+     "resource_type_uuid": "f386a33c-ac9a-400a-a7b8-fe1fc7c8d270",
+     "quantity_scu": 0.01,
+     "link": "https://api.star-citizen.wiki/api/commodities/f386a33c-ac9a-400a-a7b8-fe1fc7c8d270",
+     "web_url": "https://api.star-citizen.wiki/commodities/f386a33c-ac9a-400a-a7b8-fe1fc7c8d270"
+    },
+    {
+     "name": "Hephaestanite",
+     "resource_type_uuid": "61189578-ed7a-4491-9774-37ae2f82b8b0",
+     "quantity_scu": 0.01,
+     "link": "https://api.star-citizen.wiki/api/commodities/61189578-ed7a-4491-9774-37ae2f82b8b0",
+     "web_url": "https://api.star-citizen.wiki/commodities/61189578-ed7a-4491-9774-37ae2f82b8b0"
+    }
+   ],
+   "output": {
+    "uuid": "c098e722-902a-435b-83f8-a96cec36a012",
+    "name": "Killshot Rifle",
+    "class": "none_rifle_multi_01",
+    "type": "WeaponPersonal",
+    "type_label": "FPS Weapon",
+    "sub_type": "Medium",
+    "subtype": "Medium",
+    "grade": "1",
+    "item_web_url": "https://api.star-citizen.wiki/items/c098e722-902a-435b-83f8-a96cec36a012"
+   },
+   "web_url": "https://api.star-citizen.wiki/blueprints/killshot-rifle",
+   "output_item_web_url": "https://api.star-citizen.wiki/items/c098e722-902a-435b-83f8-a96cec36a012",
+   "link": "https://api.star-citizen.wiki/api/blueprints/e3097998-28ef-48ad-a220-2ddaa1a85ce3"
+  }
+ ],
+ "details": {
+  "280f47b7-8434-410c-b854-380768fdccec": {
+   "uuid": "280f47b7-8434-410c-b854-380768fdccec",
+   "key": "BP_CRAFT_AMRS_LaserCannon_S1",
+   "game_version": "4.10.2-LIVE.12881860",
+   "output_name": "Omnisky III Cannon",
+   "craft_time_seconds": 540,
+   "ingredient_count": 3,
+   "ingredients": [
+    {
+     "name": "Agricium",
+     "kind": "resource",
+     "resource_type_uuid": "dc6fbcbb-5990-4ed5-82ee-93152dab7845",
+     "item_uuid": null,
+     "quantity_scu": 0.36,
+     "quantity": null,
+     "link": "https://api.star-citizen.wiki/api/commodities/fc1ec740-3047-48d8-81f0-396f4c9a90ef",
+     "web_url": "https://api.star-citizen.wiki/commodities/fc1ec740-3047-48d8-81f0-396f4c9a90ef"
+    },
+    {
+     "name": "Hadanite",
+     "kind": "item",
+     "resource_type_uuid": null,
+     "item_uuid": "125dd723-95ad-488d-830f-62c954445ca1",
+     "quantity_scu": null,
+     "quantity": 7,
+     "link": "https://api.star-citizen.wiki/api/items/125dd723-95ad-488d-830f-62c954445ca1",
+     "web_url": "https://api.star-citizen.wiki/items/125dd723-95ad-488d-830f-62c954445ca1"
+    },
+    {
+     "name": "Dolivine",
+     "kind": "item",
+     "resource_type_uuid": null,
+     "item_uuid": "20094ded-ad04-46a3-b734-9e37aa3154b3",
+     "quantity_scu": null,
+     "quantity": 7,
+     "link": "https://api.star-citizen.wiki/api/items/20094ded-ad04-46a3-b734-9e37aa3154b3",
+     "web_url": "https://api.star-citizen.wiki/items/20094ded-ad04-46a3-b734-9e37aa3154b3"
+    }
+   ],
+   "requirement_groups": [
+    {
+     "key": "FRAME",
+     "name": "Frame",
+     "kind": "group",
+     "required_count": 1,
+     "modifiers": [
+      {
+       "property_key": "health_maxhealth",
+       "property_uuid": null,
+       "label": "Integrity",
+       "better_when": "higher",
+       "quality_range": {
+        "min": 0,
+        "max": 1000
+       },
+       "modifier_range": {
+        "at_min_quality": 0.9,
+        "at_max_quality": 1.1
+       },
+       "value_range_type": "linear",
+       "value_segments": null
+      }
+     ],
+     "children": [
+      {
+       "key": null,
+       "kind": "resource",
+       "uuid": "dc6fbcbb-5990-4ed5-82ee-93152dab7845",
+       "name": "Agricium",
+       "required_count": null,
+       "quantity": null,
+       "quantity_scu": 0.36,
+       "min_quality": 1,
+       "modifiers": [],
+       "ore_uuid": "fc1ec740-3047-48d8-81f0-396f4c9a90ef"
+      }
+     ]
+    },
+    {
+     "key": "EMITTER",
+     "name": "Emitter",
+     "kind": "group",
+     "required_count": 1,
+     "modifiers": [
+      {
+       "property_key": "weapon_damage",
+       "property_uuid": null,
+       "label": "Impact Force",
+       "better_when": "higher",
+       "quality_range": {
+        "min": 0,
+        "max": 1000
+       },
+       "modifier_range": {
+        "at_min_quality": 0.95,
+        "at_max_quality": 1.05
+       },
+       "value_range_type": "linear",
+       "value_segments": null
+      }
+     ],
+     "children": [
+      {
+       "key": null,
+       "kind": "item",
+       "uuid": "125dd723-95ad-488d-830f-62c954445ca1",
+       "name": "Hadanite",
+       "required_count": null,
+       "quantity": 7,
+       "quantity_scu": null,
+       "min_quality": 1,
+       "modifiers": []
+      }
+     ]
+    },
+    {
+     "key": "APERTURE IRIS",
+     "name": "Aperture Iris",
+     "kind": "group",
+     "required_count": 1,
+     "modifiers": [
+      {
+       "property_key": "weapon_damage",
+       "property_uuid": null,
+       "label": "Impact Force",
+       "better_when": "higher",
+       "quality_range": {
+        "min": 0,
+        "max": 1000
+       },
+       "modifier_range": {
+        "at_min_quality": 0.95,
+        "at_max_quality": 1.05
+       },
+       "value_range_type": "linear",
+       "value_segments": null
+      }
+     ],
+     "children": [
+      {
+       "key": null,
+       "kind": "item",
+       "uuid": "20094ded-ad04-46a3-b734-9e37aa3154b3",
+       "name": "Dolivine",
+       "required_count": null,
+       "quantity": 7,
+       "quantity_scu": null,
+       "min_quality": 1,
+       "modifiers": []
+      }
+     ]
+    }
+   ],
+   "tiers": [
+    {
+     "tier_index": 0,
+     "requirements": {
+      "kind": "root",
+      "children": [
+       {
+        "key": "FRAME",
+        "kind": "group",
+        "name": "Frame",
+        "children": [
+         {
+          "kind": "resource",
+          "name": "Agricium",
+          "uuid": "dc6fbcbb-5990-4ed5-82ee-93152dab7845",
+          "min_quality": 1,
+          "quantity_scu": 0.36
+         }
+        ],
+        "modifiers": [
+         {
+          "key": "health_maxhealth",
+          "name": "Integrity",
+          "uuid": "93a49e68-01cf-4d7e-b995-8224466a9982",
+          "quality_range": {
+           "max": 1000,
+           "min": 0
+          },
+          "modifier_range": {
+           "at_max_quality": 1.1,
+           "at_min_quality": 0.9
+          },
+          "value_range_type": "linear"
+         }
+        ],
+        "required_count": 1
+       },
+       {
+        "key": "EMITTER",
+        "kind": "group",
+        "name": "Emitter",
+        "children": [
+         {
+          "kind": "item",
+          "name": "Hadanite",
+          "uuid": "125dd723-95ad-488d-830f-62c954445ca1",
+          "quantity": 7,
+          "min_quality": 1
+         }
+        ],
+        "modifiers": [
+         {
+          "key": "weapon_damage",
+          "name": "Impact Force",
+          "uuid": "cfc129ce-488a-46f2-92f7-9272cd0cfdfb",
+          "unit_format": "%+.2f %%",
+          "quality_range": {
+           "max": 1000,
+           "min": 0
+          },
+          "modifier_range": {
+           "at_max_quality": 1.05,
+           "at_min_quality": 0.95
+          },
+          "value_range_type": "linear"
+         }
+        ],
+        "required_count": 1
+       },
+       {
+        "key": "APERTURE IRIS",
+        "kind": "group",
+        "name": "Aperture Iris",
+        "children": [
+         {
+          "kind": "item",
+          "name": "Dolivine",
+          "uuid": "20094ded-ad04-46a3-b734-9e37aa3154b3",
+          "quantity": 7,
+          "min_quality": 1
+         }
+        ],
+        "modifiers": [
+         {
+          "key": "weapon_damage",
+          "name": "Impact Force",
+          "uuid": "cfc129ce-488a-46f2-92f7-9272cd0cfdfb",
+          "unit_format": "%+.2f %%",
+          "quality_range": {
+           "max": 1000,
+           "min": 0
+          },
+          "modifier_range": {
+           "at_max_quality": 1.05,
+           "at_min_quality": 0.95
+          },
+          "value_range_type": "linear"
+         }
+        ],
+        "required_count": 1
+       }
+      ]
+     },
+     "craft_time_seconds": 540
+    }
+   ]
+  },
+  "31b2edb4-1b3d-4073-81a4-c0d1572a9a42": {
+   "uuid": "31b2edb4-1b3d-4073-81a4-c0d1572a9a42",
+   "key": "BP_CRAFT_COOL_ACOM_S01_QuickCool_SCItem",
+   "game_version": "4.10.2-LIVE.12881860",
+   "output_name": "QuikCool",
+   "craft_time_seconds": 450,
+   "ingredient_count": 3,
+   "ingredients": [
+    {
+     "name": "Iron",
+     "kind": "resource",
+     "resource_type_uuid": "f386a33c-ac9a-400a-a7b8-fe1fc7c8d270",
+     "item_uuid": null,
+     "quantity_scu": 0.26,
+     "quantity": null,
+     "link": "https://api.star-citizen.wiki/api/commodities/32c57a12-5de5-49b1-827a-9fd80278fbc4",
+     "web_url": "https://api.star-citizen.wiki/commodities/32c57a12-5de5-49b1-827a-9fd80278fbc4"
+    },
+    {
+     "name": "Pressurized Ice",
+     "kind": "resource",
+     "resource_type_uuid": "f9f3251a-8e48-408a-b957-f1e3d5d3e213",
+     "item_uuid": null,
+     "quantity_scu": 0.16,
+     "quantity": null,
+     "link": "https://api.star-citizen.wiki/api/commodities/d9653427-af7f-4fea-bbd6-ae89393524b7",
+     "web_url": "https://api.star-citizen.wiki/commodities/d9653427-af7f-4fea-bbd6-ae89393524b7"
+    }
+   ],
+   "requirement_groups": [
+    {
+     "key": "SHELL",
+     "name": "Shell",
+     "kind": "group",
+     "required_count": 1,
+     "modifiers": [
+      {
+       "property_key": "health_maxhealth",
+       "property_uuid": null,
+       "label": "Integrity",
+       "better_when": "higher",
+       "quality_range": {
+        "min": 0,
+        "max": 500
+       },
+       "modifier_range": {
+        "at_min_quality": 0.8,
+        "at_max_quality": 1
+       },
+       "value_range_type": "linear",
+       "value_segments": [
+        {
+         "quality_min": 0,
+         "quality_max": 500,
+         "modifier_at_start": 0.8,
+         "modifier_at_end": 1
+        },
+        {
+         "quality_min": 501,
+         "quality_max": 1000,
+         "modifier_at_start": 1,
+         "modifier_at_end": 1.2
+        }
+       ]
+      }
+     ],
+     "children": [
+      {
+       "key": null,
+       "kind": "resource",
+       "uuid": "f386a33c-ac9a-400a-a7b8-fe1fc7c8d270",
+       "name": "Iron",
+       "required_count": null,
+       "quantity": null,
+       "quantity_scu": 0.16,
+       "min_quality": 1,
+       "modifiers": [],
+       "ore_uuid": "32c57a12-5de5-49b1-827a-9fd80278fbc4"
+      }
+     ]
+    },
+    {
+     "key": "COOLANT",
+     "name": "Coolant",
+     "kind": "group",
+     "required_count": 1,
+     "modifiers": [
+      {
+       "property_key": "itemresource_coolantgeneration",
+       "property_uuid": null,
+       "label": "Coolant Rating",
+       "better_when": "higher",
+       "quality_range": {
+        "min": 0,
+        "max": 500
+       },
+       "modifier_range": {
+        "at_min_quality": 0.85,
+        "at_max_quality": 1
+       },
+       "value_range_type": "linear",
+       "value_segments": [
+        {
+         "quality_min": 0,
+         "quality_max": 500,
+         "modifier_at_start": 0.85,
+         "modifier_at_end": 1
+        },
+        {
+         "quality_min": 501,
+         "quality_max": 1000,
+         "modifier_at_start": 1,
+         "modifier_at_end": 1.15
+        }
+       ]
+      }
+     ],
+     "children": [
+      {
+       "key": null,
+       "kind": "resource",
+       "uuid": "f9f3251a-8e48-408a-b957-f1e3d5d3e213",
+       "name": "Pressurized Ice",
+       "required_count": null,
+       "quantity": null,
+       "quantity_scu": 0.16,
+       "min_quality": 1,
+       "modifiers": [],
+       "ore_uuid": "d9653427-af7f-4fea-bbd6-ae89393524b7"
+      }
+     ]
+    },
+    {
+     "key": "PUMP IMPELLER",
+     "name": "Pump Impeller",
+     "kind": "group",
+     "required_count": 1,
+     "modifiers": [
+      {
+       "property_key": "itemresource_coolantgeneration",
+       "property_uuid": null,
+       "label": "Coolant Rating",
+       "better_when": "higher",
+       "quality_range": {
+        "min": 0,
+        "max": 500
+       },
+       "modifier_range": {
+        "at_min_quality": 0.95,
+        "at_max_quality": 1
+       },
+       "value_range_type": "linear",
+       "value_segments": [
+        {
+         "quality_min": 0,
+         "quality_max": 500,
+         "modifier_at_start": 0.95,
+         "modifier_at_end": 1
+        },
+        {
+         "quality_min": 501,
+         "quality_max": 1000,
+         "modifier_at_start": 1,
+         "modifier_at_end": 1.05
+        }
+       ]
+      }
+     ],
+     "children": [
+      {
+       "key": null,
+       "kind": "resource",
+       "uuid": "f386a33c-ac9a-400a-a7b8-fe1fc7c8d270",
+       "name": "Iron",
+       "required_count": null,
+       "quantity": null,
+       "quantity_scu": 0.1,
+       "min_quality": 1,
+       "modifiers": [],
+       "ore_uuid": "32c57a12-5de5-49b1-827a-9fd80278fbc4"
+      }
+     ]
+    }
+   ],
+   "tiers": [
+    {
+     "tier_index": 0,
+     "requirements": {
+      "kind": "root",
+      "children": [
+       {
+        "key": "SHELL",
+        "kind": "group",
+        "name": "Shell",
+        "children": [
+         {
+          "kind": "resource",
+          "name": "Iron",
+          "uuid": "f386a33c-ac9a-400a-a7b8-fe1fc7c8d270",
+          "min_quality": 1,
+          "quantity_scu": 0.16
+         }
+        ],
+        "modifiers": [
+         {
+          "key": "health_maxhealth",
+          "name": "Integrity",
+          "uuid": "93a49e68-01cf-4d7e-b995-8224466a9982",
+          "quality_range": {
+           "max": 500,
+           "min": 0
+          },
+          "modifier_range": {
+           "at_max_quality": 1,
+           "at_min_quality": 0.8
+          },
+          "value_segments": [
+           {
+            "quality_max": 500,
+            "quality_min": 0,
+            "modifier_at_end": 1,
+            "modifier_at_start": 0.8
+           },
+           {
+            "quality_max": 1000,
+            "quality_min": 501,
+            "modifier_at_end": 1.2,
+            "modifier_at_start": 1
+           }
+          ],
+          "value_range_type": "linear"
+         }
+        ],
+        "required_count": 1
+       },
+       {
+        "key": "COOLANT",
+        "kind": "group",
+        "name": "Coolant",
+        "children": [
+         {
+          "kind": "resource",
+          "name": "Pressurized Ice",
+          "uuid": "f9f3251a-8e48-408a-b957-f1e3d5d3e213",
+          "min_quality": 1,
+          "quantity_scu": 0.16
+         }
+        ],
+        "modifiers": [
+         {
+          "key": "itemresource_coolantgeneration",
+          "name": "Coolant Rating",
+          "uuid": "31e2f3b5-7fb3-41c2-b2d9-7a97adf9f7fe",
+          "display_scale": 1e-06,
+          "quality_range": {
+           "max": 500,
+           "min": 0
+          },
+          "modifier_range": {
+           "at_max_quality": 1,
+           "at_min_quality": 0.85
+          },
+          "value_segments": [
+           {
+            "quality_max": 500,
+            "quality_min": 0,
+            "modifier_at_end": 1,
+            "modifier_at_start": 0.85
+           },
+           {
+            "quality_max": 1000,
+            "quality_min": 501,
+            "modifier_at_end": 1.15,
+            "modifier_at_start": 1
+           }
+          ],
+          "value_range_type": "linear"
+         }
+        ],
+        "required_count": 1
+       },
+       {
+        "key": "PUMP IMPELLER",
+        "kind": "group",
+        "name": "Pump Impeller",
+        "children": [
+         {
+          "kind": "resource",
+          "name": "Iron",
+          "uuid": "f386a33c-ac9a-400a-a7b8-fe1fc7c8d270",
+          "min_quality": 1,
+          "quantity_scu": 0.1
+         }
+        ],
+        "modifiers": [
+         {
+          "key": "itemresource_coolantgeneration",
+          "name": "Coolant Rating",
+          "uuid": "31e2f3b5-7fb3-41c2-b2d9-7a97adf9f7fe",
+          "display_scale": 1e-06,
+          "quality_range": {
+           "max": 500,
+           "min": 0
+          },
+          "modifier_range": {
+           "at_max_quality": 1,
+           "at_min_quality": 0.95
+          },
+          "value_segments": [
+           {
+            "quality_max": 500,
+            "quality_min": 0,
+            "modifier_at_end": 1,
+            "modifier_at_start": 0.95
+           },
+           {
+            "quality_max": 1000,
+            "quality_min": 501,
+            "modifier_at_end": 1.05,
+            "modifier_at_start": 1
+           }
+          ],
+          "value_range_type": "linear"
+         }
+        ],
+        "required_count": 1
+       }
+      ]
+     },
+     "craft_time_seconds": 450
+    }
+   ]
+  },
+  "c9c67e69-063a-4d28-a156-d5809776ee22": {
+   "uuid": "c9c67e69-063a-4d28-a156-d5809776ee22",
+   "key": "BP_CRAFT_Carryable_2H_CY_CollectorMaterial_001",
+   "game_version": "4.10.2-LIVE.12881860",
+   "output_name": "Metamaterial Test #146",
+   "craft_time_seconds": 70,
+   "ingredient_count": 3,
+   "ingredients": [
+    {
+     "name": "Titanium",
+     "kind": "resource",
+     "resource_type_uuid": "07570c9f-fdf6-4bca-a56b-c42809ec0e01",
+     "item_uuid": null,
+     "quantity_scu": 2,
+     "quantity": null,
+     "link": "https://api.star-citizen.wiki/api/commodities/64978449-1d87-4a16-ba55-4b5f94fee217",
+     "web_url": "https://api.star-citizen.wiki/commodities/64978449-1d87-4a16-ba55-4b5f94fee217"
+    },
+    {
+     "name": "Riccite",
+     "kind": "resource",
+     "resource_type_uuid": "86d00bd8-08f7-4231-b375-a609803fc46d",
+     "item_uuid": null,
+     "quantity_scu": 2,
+     "quantity": null,
+     "link": "https://api.star-citizen.wiki/api/commodities/c3697191-8ad0-43a9-af7a-29c0ad58de34",
+     "web_url": "https://api.star-citizen.wiki/commodities/c3697191-8ad0-43a9-af7a-29c0ad58de34"
+    },
+    {
+     "name": "Yormandi Eye",
+     "kind": "item",
+     "resource_type_uuid": null,
+     "item_uuid": "124da32f-de8f-45f6-a2f1-81fd47752b2d",
+     "quantity_scu": null,
+     "quantity": 4,
+     "link": "https://api.star-citizen.wiki/api/items/124da32f-de8f-45f6-a2f1-81fd47752b2d",
+     "web_url": "https://api.star-citizen.wiki/items/124da32f-de8f-45f6-a2f1-81fd47752b2d"
+    }
+   ],
+   "requirement_groups": [
+    {
+     "key": "SUBSTRATE",
+     "name": "Substrate",
+     "kind": "group",
+     "required_count": 1,
+     "modifiers": [],
+     "children": [
+      {
+       "key": null,
+       "kind": "resource",
+       "uuid": "07570c9f-fdf6-4bca-a56b-c42809ec0e01",
+       "name": "Titanium",
+       "required_count": null,
+       "quantity": null,
+       "quantity_scu": 2,
+       "min_quality": 900,
+       "modifiers": [],
+       "ore_uuid": "64978449-1d87-4a16-ba55-4b5f94fee217"
+      }
+     ]
+    },
+    {
+     "key": "LATTICE",
+     "name": "Lattice",
+     "kind": "group",
+     "required_count": 1,
+     "modifiers": [],
+     "children": [
+      {
+       "key": null,
+       "kind": "resource",
+       "uuid": "86d00bd8-08f7-4231-b375-a609803fc46d",
+       "name": "Riccite",
+       "required_count": null,
+       "quantity": null,
+       "quantity_scu": 2,
+       "min_quality": 800,
+       "modifiers": [],
+       "ore_uuid": "c3697191-8ad0-43a9-af7a-29c0ad58de34"
+      }
+     ]
+    },
+    {
+     "key": "FILAMENT COATING",
+     "name": "Filament Coating",
+     "kind": "group",
+     "required_count": 1,
+     "modifiers": [],
+     "children": [
+      {
+       "key": null,
+       "kind": "item",
+       "uuid": "124da32f-de8f-45f6-a2f1-81fd47752b2d",
+       "name": "Yormandi Eye",
+       "required_count": null,
+       "quantity": 4,
+       "quantity_scu": null,
+       "min_quality": 0,
+       "modifiers": []
+      }
+     ]
+    }
+   ],
+   "tiers": [
+    {
+     "tier_index": 0,
+     "requirements": {
+      "kind": "root",
+      "children": [
+       {
+        "key": "SUBSTRATE",
+        "kind": "group",
+        "name": "Substrate",
+        "children": [
+         {
+          "kind": "resource",
+          "name": "Titanium",
+          "uuid": "07570c9f-fdf6-4bca-a56b-c42809ec0e01",
+          "min_quality": 900,
+          "quantity_scu": 2
+         }
+        ],
+        "required_count": 1
+       },
+       {
+        "key": "LATTICE",
+        "kind": "group",
+        "name": "Lattice",
+        "children": [
+         {
+          "kind": "resource",
+          "name": "Riccite",
+          "uuid": "86d00bd8-08f7-4231-b375-a609803fc46d",
+          "min_quality": 800,
+          "quantity_scu": 2
+         }
+        ],
+        "required_count": 1
+       },
+       {
+        "key": "FILAMENT COATING",
+        "kind": "group",
+        "name": "Filament Coating",
+        "children": [
+         {
+          "kind": "item",
+          "name": "Yormandi Eye",
+          "uuid": "124da32f-de8f-45f6-a2f1-81fd47752b2d",
+          "quantity": 4,
+          "min_quality": 0
+         }
+        ],
+        "required_count": 1
+       }
+      ]
+     },
+     "craft_time_seconds": 70
+    }
+   ]
+  },
+  "e3097998-28ef-48ad-a220-2ddaa1a85ce3": {
+   "uuid": "e3097998-28ef-48ad-a220-2ddaa1a85ce3",
+   "key": "BP_CRAFT_none_rifle_multi_01",
+   "game_version": "4.10.2-LIVE.12881860",
+   "output_name": "Killshot Rifle",
+   "craft_time_seconds": 150,
+   "ingredient_count": 3,
+   "ingredients": [
+    {
+     "name": "Iron",
+     "kind": "resource",
+     "resource_type_uuid": "f386a33c-ac9a-400a-a7b8-fe1fc7c8d270",
+     "item_uuid": null,
+     "quantity_scu": 0.06,
+     "quantity": null,
+     "link": "https://api.star-citizen.wiki/api/commodities/32c57a12-5de5-49b1-827a-9fd80278fbc4",
+     "web_url": "https://api.star-citizen.wiki/commodities/32c57a12-5de5-49b1-827a-9fd80278fbc4"
+    },
+    {
+     "name": "Hephaestanite",
+     "kind": "resource",
+     "resource_type_uuid": "61189578-ed7a-4491-9774-37ae2f82b8b0",
+     "item_uuid": null,
+     "quantity_scu": 0.02,
+     "quantity": null,
+     "link": "https://api.star-citizen.wiki/api/commodities/cad319d9-e0e5-420d-bbfd-dd62a0362d05",
+     "web_url": "https://api.star-citizen.wiki/commodities/cad319d9-e0e5-420d-bbfd-dd62a0362d05"
+    }
+   ],
+   "requirement_groups": [
+    {
+     "key": "FRAME",
+     "name": "Frame",
+     "kind": "group",
+     "required_count": 1,
+     "modifiers": [
+      {
+       "property_key": "weapon_recoil_smoothness",
+       "property_uuid": null,
+       "label": "Recoil Smoothness",
+       "better_when": "lower",
+       "quality_range": {
+        "min": 0,
+        "max": 1000
+       },
+       "modifier_range": {
+        "at_min_quality": 1.2,
+        "at_max_quality": 0.8
+       },
+       "value_range_type": "linear",
+       "value_segments": null
+      },
+      {
+       "property_key": "weapon_recoil_handling",
+       "property_uuid": null,
+       "label": "Recoil Handling",
+       "better_when": "lower",
+       "quality_range": {
+        "min": 0,
+        "max": 1000
+       },
+       "modifier_range": {
+        "at_min_quality": 1.2,
+        "at_max_quality": 0.8
+       },
+       "value_range_type": "linear",
+       "value_segments": null
+      },
+      {
+       "property_key": "weapon_recoil_kick",
+       "property_uuid": null,
+       "label": "Recoil Kick",
+       "better_when": "lower",
+       "quality_range": {
+        "min": 0,
+        "max": 1000
+       },
+       "modifier_range": {
+        "at_min_quality": 1.2,
+        "at_max_quality": 0.8
+       },
+       "value_range_type": "linear",
+       "value_segments": null
+      }
+     ],
+     "children": [
+      {
+       "key": null,
+       "kind": "resource",
+       "uuid": "f386a33c-ac9a-400a-a7b8-fe1fc7c8d270",
+       "name": "Iron",
+       "required_count": null,
+       "quantity": null,
+       "quantity_scu": 0.04,
+       "min_quality": 0,
+       "modifiers": [],
+       "ore_uuid": "32c57a12-5de5-49b1-827a-9fd80278fbc4"
+      }
+     ]
+    },
+    {
+     "key": "STOCK:",
+     "name": "Stock",
+     "kind": "group",
+     "required_count": 1,
+     "modifiers": [
+      {
+       "property_key": "weapon_recoil_smoothness",
+       "property_uuid": null,
+       "label": "Recoil Smoothness",
+       "better_when": "lower",
+       "quality_range": {
+        "min": 0,
+        "max": 1000
+       },
+       "modifier_range": {
+        "at_min_quality": 1.2,
+        "at_max_quality": 0.8
+       },
+       "value_range_type": "linear",
+       "value_segments": null
+      },
+      {
+       "property_key": "weapon_recoil_handling",
+       "property_uuid": null,
+       "label": "Recoil Handling",
+       "better_when": "lower",
+       "quality_range": {
+        "min": 0,
+        "max": 1000
+       },
+       "modifier_range": {
+        "at_min_quality": 1.2,
+        "at_max_quality": 0.8
+       },
+       "value_range_type": "linear",
+       "value_segments": null
+      },
+      {
+       "property_key": "weapon_recoil_kick",
+       "property_uuid": null,
+       "label": "Recoil Kick",
+       "better_when": "lower",
+       "quality_range": {
+        "min": 0,
+        "max": 1000
+       },
+       "modifier_range": {
+        "at_min_quality": 1.2,
+        "at_max_quality": 0.8
+       },
+       "value_range_type": "linear",
+       "value_segments": null
+      }
+     ],
+     "children": [
+      {
+       "key": null,
+       "kind": "resource",
+       "uuid": "61189578-ed7a-4491-9774-37ae2f82b8b0",
+       "name": "Hephaestanite",
+       "required_count": null,
+       "quantity": null,
+       "quantity_scu": 0.02,
+       "min_quality": 0,
+       "modifiers": [],
+       "ore_uuid": "cad319d9-e0e5-420d-bbfd-dd62a0362d05"
+      }
+     ]
+    },
+    {
+     "key": "BARREL:",
+     "name": "Barrel",
+     "kind": "group",
+     "required_count": 1,
+     "modifiers": [
+      {
+       "property_key": "weapon_damage",
+       "property_uuid": null,
+       "label": "Impact Force",
+       "better_when": "higher",
+       "quality_range": {
+        "min": 0,
+        "max": 1000
+       },
+       "modifier_range": {
+        "at_min_quality": 0.925,
+        "at_max_quality": 1.075
+       },
+       "value_range_type": "linear",
+       "value_segments": null
+      },
+      {
+       "property_key": "weapon_firerate",
+       "property_uuid": null,
+       "label": "Fire Rate",
+       "better_when": "higher",
+       "quality_range": {
+        "min": 0,
+        "max": 1000
+       },
+       "modifier_range": {
+        "at_min_quality": 0.88,
+        "at_max_quality": 1.12
+       },
+       "value_range_type": "linear",
+       "value_segments": null
+      }
+     ],
+     "children": [
+      {
+       "key": null,
+       "kind": "resource",
+       "uuid": "f386a33c-ac9a-400a-a7b8-fe1fc7c8d270",
+       "name": "Iron",
+       "required_count": null,
+       "quantity": null,
+       "quantity_scu": 0.02,
+       "min_quality": 0,
+       "modifiers": [],
+       "ore_uuid": "32c57a12-5de5-49b1-827a-9fd80278fbc4"
+      }
+     ]
+    }
+   ],
+   "tiers": [
+    {
+     "tier_index": 0,
+     "requirements": {
+      "kind": "root",
+      "children": [
+       {
+        "key": "FRAME",
+        "kind": "group",
+        "name": "Frame",
+        "children": [
+         {
+          "kind": "resource",
+          "name": "Iron",
+          "uuid": "f386a33c-ac9a-400a-a7b8-fe1fc7c8d270",
+          "min_quality": 0,
+          "quantity_scu": 0.04
+         }
+        ],
+        "modifiers": [
+         {
+          "key": "weapon_recoil_smoothness",
+          "name": "Recoil Smoothness",
+          "uuid": "1156716c-b01e-4228-8136-7430be5bb9b8",
+          "unit_format": "%+.2f %%",
+          "quality_range": {
+           "max": 1000,
+           "min": 0
+          },
+          "modifier_range": {
+           "at_max_quality": 0.8,
+           "at_min_quality": 1.2
+          },
+          "value_range_type": "linear"
+         },
+         {
+          "key": "weapon_recoil_handling",
+          "name": "Recoil Handling",
+          "uuid": "037ea34c-e564-492e-b575-3e5aac5895e4",
+          "unit_format": "%+.2f %%",
+          "quality_range": {
+           "max": 1000,
+           "min": 0
+          },
+          "modifier_range": {
+           "at_max_quality": 0.8,
+           "at_min_quality": 1.2
+          },
+          "value_range_type": "linear"
+         },
+         {
+          "key": "weapon_recoil_kick",
+          "name": "Recoil Kick",
+          "uuid": "f68f87d6-1981-4c22-bed6-ce352922cb34",
+          "unit_format": "%+.2f %%",
+          "quality_range": {
+           "max": 1000,
+           "min": 0
+          },
+          "modifier_range": {
+           "at_max_quality": 0.8,
+           "at_min_quality": 1.2
+          },
+          "value_range_type": "linear"
+         }
+        ],
+        "required_count": 1
+       },
+       {
+        "key": "STOCK:",
+        "kind": "group",
+        "name": "Stock",
+        "children": [
+         {
+          "kind": "resource",
+          "name": "Hephaestanite",
+          "uuid": "61189578-ed7a-4491-9774-37ae2f82b8b0",
+          "min_quality": 0,
+          "quantity_scu": 0.02
+         }
+        ],
+        "modifiers": [
+         {
+          "key": "weapon_recoil_smoothness",
+          "name": "Recoil Smoothness",
+          "uuid": "1156716c-b01e-4228-8136-7430be5bb9b8",
+          "unit_format": "%+.2f %%",
+          "quality_range": {
+           "max": 1000,
+           "min": 0
+          },
+          "modifier_range": {
+           "at_max_quality": 0.8,
+           "at_min_quality": 1.2
+          },
+          "value_range_type": "linear"
+         },
+         {
+          "key": "weapon_recoil_handling",
+          "name": "Recoil Handling",
+          "uuid": "037ea34c-e564-492e-b575-3e5aac5895e4",
+          "unit_format": "%+.2f %%",
+          "quality_range": {
+           "max": 1000,
+           "min": 0
+          },
+          "modifier_range": {
+           "at_max_quality": 0.8,
+           "at_min_quality": 1.2
+          },
+          "value_range_type": "linear"
+         },
+         {
+          "key": "weapon_recoil_kick",
+          "name": "Recoil Kick",
+          "uuid": "f68f87d6-1981-4c22-bed6-ce352922cb34",
+          "unit_format": "%+.2f %%",
+          "quality_range": {
+           "max": 1000,
+           "min": 0
+          },
+          "modifier_range": {
+           "at_max_quality": 0.8,
+           "at_min_quality": 1.2
+          },
+          "value_range_type": "linear"
+         }
+        ],
+        "required_count": 1
+       },
+       {
+        "key": "BARREL:",
+        "kind": "group",
+        "name": "Barrel",
+        "children": [
+         {
+          "kind": "resource",
+          "name": "Iron",
+          "uuid": "f386a33c-ac9a-400a-a7b8-fe1fc7c8d270",
+          "min_quality": 0,
+          "quantity_scu": 0.02
+         }
+        ],
+        "modifiers": [
+         {
+          "key": "weapon_damage",
+          "name": "Impact Force",
+          "uuid": "cfc129ce-488a-46f2-92f7-9272cd0cfdfb",
+          "unit_format": "%+.2f %%",
+          "quality_range": {
+           "max": 1000,
+           "min": 0
+          },
+          "modifier_range": {
+           "at_max_quality": 1.075,
+           "at_min_quality": 0.925
+          },
+          "value_range_type": "linear"
+         },
+         {
+          "key": "weapon_firerate",
+          "name": "Fire Rate",
+          "uuid": "551b651c-8a34-438f-9d19-93fdffe56246",
+          "unit_format": "%.2f RPM",
+          "quality_range": {
+           "max": 1000,
+           "min": 0
+          },
+          "modifier_range": {
+           "at_max_quality": 1.12,
+           "at_min_quality": 0.88
+          },
+          "value_range_type": "linear"
+         }
+        ],
+        "required_count": 1
+       }
+      ]
+     },
+     "craft_time_seconds": 150
+    }
+   ]
+  }
+ }
+}
