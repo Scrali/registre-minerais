@@ -1447,12 +1447,28 @@ async function startLive() {
   ocrMsg("Lecture en direct active : survole chaque caisse environ une seconde, puis clique sur « Arrêter ».");
   live.timer = setInterval(liveTick, 300);
 }
+// Image quasi uniformément noire (moyenne et écart très faibles), mesurée sur une version réduite.
+function isBlackFrame(bmp) {
+  const c = document.createElement("canvas"); c.width = 64; c.height = 36;
+  const g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(bmp, 0, 0, 64, 36);
+  const d = g.getImageData(0, 0, 64, 36).data; let sum = 0, max = 0;
+  for (let i = 0; i < d.length; i += 4) { const l = (d[i] + d[i + 1] + d[i + 2]) / 3; sum += l; if (l > max) max = l; }
+  return sum / (d.length / 4) < 4 && max < 20;
+}
 async function liveTick() {
   if (live.busy || !live.video || live.video.readyState < 2) return;
   live.busy = true;
   try {
     const bmp = await createImageBitmap(live.video);
     if (!live.shot.url) { const c = document.createElement("canvas"); c.width = 320; c.height = Math.round(320 * bmp.height / bmp.width); c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height); live.shot.url = c.toDataURL("image/jpeg", 0.7); renderShots(); }
+    // Image partagée toute noire (jeu en plein écran exclusif) : on le signale au lieu de lire dans le vide.
+    if (isBlackFrame(bmp)) {
+      live.black = (live.black || 0) + 1;
+      if (live.black === 6) ocrMsg("L'image partagée est noire : le navigateur ne voit pas le jeu. Arrête, puis relance en choisissant « Écran entier » au lieu de « Fenêtre » ; sinon mets le jeu en mode « Sans bordure » (Options › Graphismes), ou utilise les captures de ta carte graphique (NVIDIA Alt+F1, AMD Ctrl+Maj+I) avec « Surveiller mon dossier de captures ».", true);
+      bmp.close && bmp.close(); live.busy = false; return;
+    }
+    if (live.black >= 6) ocrMsg("Lecture en direct active : le jeu est visible. Survole chaque caisse environ une seconde.");
+    live.black = 0;
     const got = await frameTooltip(bmp, live.shot, live.fs, Date.now());
     bmp.close && bmp.close();
     if (got && got.added) { live.n++; live.shot.n = live.n; ocrMsg(`Lecture en direct : ${live.n} caisse${live.n > 1 ? "s" : ""} lue${live.n > 1 ? "s" : ""}. Continue, ou clique sur « Arrêter ».`); }
