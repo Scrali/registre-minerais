@@ -30,7 +30,8 @@ const SCHEMA = {
         properties: {
           name: { type: "string" },
           quality: { type: ["integer", "null"] },
-          qty: { type: "number" },
+          // null : contenu d'une caisse de minerai non affiché (à saisir par le joueur).
+          qty: { type: ["number", "null"] },
           unit: { type: "string" },
           color: { type: "string" },
           hex: { type: "string" },
@@ -60,6 +61,7 @@ FORMAT DES CASES (inventaire, soute, entrepôt) : chaque case de minerai est un 
 - Le nombre suivi de « Q » (ex. « 258Q ») est la QUALITÉ du lot, de 0 à 1000. Ce n'est PAS une quantité.
 - Le nombre suivi de « x » (ex. « 20x ») est la QUANTITÉ d'unités dans le lot. S'il n'y a pas de « x », la quantité est 1.
 - Exemple : une case « 258Q 20x » = 20 unités de qualité 258 ; une case « 274Q » seule = 1 unité de qualité 274.
+CAISSES DE MINERAI (inventaire personnel, local, ascenseur de fret, soute) : une case qui montre un caillou avec une qualité (« 855Q ») et une PETITE ICÔNE DE CAISSE dans un coin, sans « x », est une caisse de minerai dont le contenu varie d'une caisse à l'autre (0,115 SCU, 0,503 SCU, 4 SCU…). Pour une telle case : unit = "SCU" ; qty = le contenu en SCU SEULEMENT si une infobulle de CETTE case est visible et l'indique (la valeur en SCU sur la ligne du minerai, ex. « Cuivre (M) 855 0.503 SCU » donne 0.503 ; ATTENTION, « Volume : 1000000 µSCU » et « Capacité : 1.00 SCU » sont la taille de la caisse, PAS son contenu) ; sinon qty = null. N'invente jamais ce contenu et ne mets jamais 1 par défaut pour une caisse. Les gemmes et objets sans icône de caisse (« 7x », ou une case seule) restent des objets : unit = chaîne vide.
 Relève chaque case une par une : un élément de la liste par case, même si deux cases ont le même minerai et la même qualité. Ne fusionne jamais deux cases.
 Si une infobulle affiche le nom d'un minerai pour une case, utilise ce nom pour cette case et pour toutes les cases de même couleur et de même forme.
 Dans ce jeu, la COULEUR et la FORME du caillou indiquent quel minerai c'est. Pour chaque lot, observe attentivement sa couleur dominante (teinte, clarté, transparence, reflets) et sa forme (cristaux, roche).
@@ -72,7 +74,7 @@ ${refs ? `IMAGES DE RÉFÉRENCE : avant la capture, tu as reçu ${refs} image(s)
 2. Si aucun nom n'est lisible, compare le caillou aux images de référence et aux couleurs connues, et reprends le nom de la ressource qui correspond le mieux. by = "couleur".
 3. Si ni le nom ni la couleur ne correspondent, mets le nom écrit s'il y en a un, sinon "Caillou <couleur>" (ex. "Caillou vert pâle"). by = "inconnu".
 UNITÉS : recopie l'unité exactement comme le jeu l'affiche (« SCU », « cSCU », « µSCU »…). Pour une quantité affichée « 20x » (nombre d'objets), unit = chaîne vide : ne convertis JAMAIS des objets en SCU ni l'inverse.
-Champs : quality = entier 0-1000 ou null si aucune qualité affichée ; qty = nombre ; unit = unité affichée, chaîne vide pour un nombre d'objets ; confidence = ta confiance de 0 à 1 dans l'identification du minerai ET dans les nombres lus (baisse-la si le texte est flou, coupé, masqué, ou si deux références se ressemblent) ; color = description en français de la couleur observée ; hex = son approximation en #rrggbb ; box = rectangle serré autour du dessin du caillou seul, SANS le texte de qualité ni de quantité ni l'icône en coin, en millièmes de la largeur et de la hauteur de la capture : [gauche, haut, droite, bas], chaque valeur de 0 à 1000.
+Champs : quality = entier 0-1000 ou null si aucune qualité affichée ; qty = nombre (null seulement pour une caisse de minerai au contenu non affiché) ; unit = unité affichée, chaîne vide pour un nombre d'objets ; confidence = ta confiance de 0 à 1 dans l'identification du minerai ET dans les nombres lus (baisse-la si le texte est flou, coupé, masqué, ou si deux références se ressemblent) ; color = description en français de la couleur observée ; hex = son approximation en #rrggbb ; box = rectangle serré autour du dessin du caillou seul, SANS le texte de qualité ni de quantité ni l'icône en coin, en millièmes de la largeur et de la hauteur de la capture : [gauche, haut, droite, bas], chaque valeur de 0 à 1000.
 Si tu ne vois aucune ressource, renvoie une liste vide.`;
 }
 

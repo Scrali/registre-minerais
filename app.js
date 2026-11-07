@@ -1139,7 +1139,10 @@ async function analyzeShot(s) {
   const refinery = ($("#capTerminal").value || s.terminal) === "raffinerie";
   const crops = refinery ? [] : await cropTiles(s.file, raw.map(i => i.box));
   const amount = i => {
-    const qty = i.qty == null ? 1 : num(i.qty), unit = String(i.unit || "").trim();
+    const unit = String(i.unit || "").trim();
+    // Caisse de minerai dont le contenu n'est pas affiché : quantité en SCU à saisir (jamais 1 par défaut).
+    if (i.qty == null && /^scu$/i.test(unit) && !refinery) return { qty: "", unit: "SCU", needQty: true };
+    const qty = i.qty == null ? 1 : num(i.qty);
     return refinery && !/^scu$/i.test(unit) ? { qty: Math.round(qty) / 100, unit: "SCU" } : { qty, unit };
   };
   return raw.map((i, k) => ({
@@ -1277,7 +1280,7 @@ function renderReview() {
       <td><input type="text" data-f="name" id="rv-name-${i}" value="${esc(it.name)}">${warn.length ? `<div class="warns">${warn.join(" ")}</div>` : ""}</td>
       <td class="rv-case">${pic}${extra}</td>
       <td><input type="number" class="qin" step="1" min="0" max="1000" placeholder="?" data-f="quality" id="rv-q-${i}" value="${esc(it.quality)}" aria-label="Qualité"></td>
-      <td><input type="number" step="any" min="0" data-f="qty" id="rv-qty-${i}" value="${it.qty}" aria-label="Quantité"></td>
+      <td><input type="number" step="any" min="0" data-f="qty" id="rv-qty-${i}" value="${it.qty}" aria-label="Quantité"${it.needQty && !(num(it.qty) > 0) ? ' class="needqty" placeholder="SCU ?" title="Contenu de la caisse : survole-la dans le jeu et recopie la valeur en SCU"' : ""}>${it.needQty && !(num(it.qty) > 0) ? '<div class="colordesc">contenu à saisir (survol en jeu)</div>' : ""}</td>
       <td><input type="text" class="uin" data-f="unit" id="rv-unit-${i}" list="unitList" maxlength="20" placeholder="objets" value="${esc(it.unit)}" aria-label="Unité"></td>
       <td><select data-f="target" id="rv-target-${i}"><option value="new"${it.target === "new" ? " selected" : ""}>Nouvelle ressource (ajoutée au catalogue)</option>${opts.map(o => `<option value="${esc(o.id)}"${o.id === it.target ? " selected" : ""}>${esc(o.name)}</option>`).join("")}</select></td></tr>`);
     }
@@ -1394,6 +1397,8 @@ $("#compare").addEventListener("click", async () => {
   if (!isAddScan() && capCoverage() === "complete" && st.shots.some(s => s.status !== "done"))
     return setMsg("#compareMsg", "Pour un inventaire complet, toutes les pages doivent être analysées sans erreur.", true);
   if (st.items.some(it => it.on && !it.name.trim())) return setMsg("#compareMsg", "Chaque ligne cochée doit avoir un nom.", true);
+  const empty = st.items.filter(it => it.on && it.needQty && !(num(it.qty) > 0)).length;
+  if (empty) return setMsg("#compareMsg", `${empty} caisse${empty > 1 ? "s" : ""} de minerai sans quantité : survole chaque caisse dans le jeu et recopie son contenu en SCU (ou décoche la ligne).`, true);
   $("#compare").disabled = true; setMsg("#compareMsg", "Comparaison avec le dernier relevé…");
   try {
     // Les nouvelles ressources rejoignent d'abord le catalogue (sans aucun stock).

@@ -305,3 +305,4 @@ button.stat.statlink:hover span{color:var(--accent)}
 .bpq input[type=range]{flex:1;min-width:160px;accent-color:var(--accent)}
 .bpq .qin,#bpIngBody .qin{width:80px}
 .bpeff{font-size:13px;white-space:nowrap}.bpeff .up{color:var(--ok)}.bpeff .down{color:var(--crit)}
+input.needqty{border-color:var(--warn);background:color-mix(in srgb,var(--warn) 12%,var(--bg))}
