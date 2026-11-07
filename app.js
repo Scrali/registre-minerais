@@ -382,7 +382,7 @@ const sumsText = m => Object.keys(m).length ? Object.entries(m).sort().map(([u, 
 const dateTxt = iso => iso ? new Date(iso).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "–";
 function resCell(r, fallback) {
   const img = r && okImg(r.image) ? `<img class="rimg" src="${esc(r.image)}" alt="">` : swatch(r && r.color);
-  return `${img}<span class="res-name">${esc(r ? r.name : fallback || "Ressource supprimée")}</span>`;
+  return `${img}<span class="res-name">${esc(r ? r.name : fallback || "Ressource supprimée")}${r && r.name_en ? ` <span class="muted" style="font-weight:400" lang="en">(${esc(r.name_en)})</span>` : ""}</span>`;
 }
 function memberOptions(sel, allLabel) {
   const cur = sel.value;
@@ -1216,7 +1216,7 @@ $("#analyze").addEventListener("click", async () => {
 
 function matchTarget(name) {
   const n = norm(name); if (!n) return "new";
-  let r = st.resources.find(x => norm(x.name) === n);
+  let r = st.resources.find(x => norm(x.name) === n) || st.resources.find(x => x.name_en && norm(x.name_en) === n);
   // Correspondance partielle : jamais entre un minerai brut « X (Ore) » et la ressource raffinée « X ».
   const ore = t => /[([]\s*(ore|raw|brut)\s*[)\]]|\bbrut\b/i.test(t);
   if (!r) r = st.resources.find(x => { const k = norm(x.name); return ore(x.name) === ore(name) && k.length > 3 && (k.includes(n) || n.includes(k)); });
@@ -1422,6 +1422,7 @@ function renderDiff() {
   if (abs) notes.push(`Attention : ${abs} ligne${abs > 1 ? "s" : ""} absente${abs > 1 ? "s" : ""} des captures passer${abs > 1 ? "ont" : "a"} à 0, car tu as indiqué un inventaire complet.`);
   if (d.duplicate_images) notes.push(d.add ? "Attention : cette capture a déjà été enregistrée pour ce lieu. L'enregistrer encore ajouterait les mêmes lots une deuxième fois."
     : "Attention : une de ces images a déjà été enregistrée pour ce lieu. Vérifie que ce n'est pas la même capture.");
+  if ((d.unit_conflicts || []).length) notes.push(`${d.unit_conflicts.length} lot${d.unit_conflicts.length > 1 ? "s" : ""} absent${d.unit_conflicts.length > 1 ? "s" : ""} de la capture mais lu${d.unit_conflicts.length > 1 ? "s" : ""} dans une autre unité (${d.unit_conflicts.map(c => `${c.name} ${qLabel(c.quality_key)} ${fmt(c.quantity)} ${c.unit || "objets"}`).join(", ")}) : conservé${d.unit_conflicts.length > 1 ? "s" : ""} tel${d.unit_conflicts.length > 1 ? "s" : ""} quel${d.unit_conflicts.length > 1 ? "s" : ""}, pas remis à zéro. Vérifie l'unité lue (SCU ou objets).`);
   if ((d.similar || []).length) notes.push(`Attention : ${d.similar.length} lot${d.similar.length > 1 ? "s" : ""} identique${d.similar.length > 1 ? "s" : ""} (même minerai, qualité et quantité) ${d.similar.length > 1 ? "ont" : "a"} déjà été ajouté${d.similar.length > 1 ? "s" : ""} ici ces derniers jours. Vérifie qu'il ne s'agit pas du même lot.`);
   if (d.stale) notes.push(`Attention : cette capture est plus ancienne que le dernier état enregistré (${dateTxt(d.last_state_at)}). L'appliquer remplacerait un état plus récent.`);
   // Case isolée identique sur deux pages (même minerai, qualité et quantité) : peut-être la même case vue deux fois.
@@ -1857,7 +1858,7 @@ function renderBpDetail() {
   const resName = id => (resOf(id) || {}).name || "?";
   $("#bpIngBody").innerHTML = v.slots.map(s => s.options.map((o, k) => {
     const mapRow = bp.maps.find(m => m.api_uuid === o.api_uuid);
-    const reg = o.resource_id ? esc(resName(o.resource_id)) : mapRow && mapRow.status === "suggested" && mapRow.resource_id
+    const reg = o.resource_id ? esc(resName(o.resource_id)) + ((resOf(o.resource_id) || {}).name_en ? ` <span class="muted" lang="en">(${esc(resOf(o.resource_id).name_en)})</span>` : "") : mapRow && mapRow.status === "suggested" && mapRow.resource_id
       ? `<span class="bpunk">À valider : ${esc(resName(mapRow.resource_id))}</span>${isAdmin() ? ` <button type="button" class="linkbtn" data-okmap="${esc(o.api_uuid)}" data-res="${esc(mapRow.resource_id)}">Valider</button>` : ""}`
       : `<span class="muted">Aucune</span>${isAdmin() ? ' <button type="button" class="linkbtn" data-gomap>Choisir…</button>' : ""}`;
     const st_ = o.status === "alternative" ? '<span class="muted">alternative</span>' : o.status === "ok" ? '<span class="bpok">0</span>'
@@ -1982,6 +1983,7 @@ function dbRow(r) {
     <td><input type="color" class="e-color" id="e-color-${esc(r.id)}" value="${okHex(r.color) || "#888888"}" data-had="${okHex(r.color) ? 1 : ""}" aria-label="Couleur de ${esc(r.name)}">
         ${refsOf(r).length ? `<div class="dbimg"><div class="refgrid">${refsOf(r).map((src, k) => `<span class="refcell"><img class="rimg" src="${esc(src)}" alt="" title="${k ? "Vue de référence " + (k + 1) : "Image principale"}"><button type="button" class="tdel" data-act="noimg" data-k="${k - 1}" data-src="${esc(src)}" title="Retirer cette image de référence" aria-label="Retirer cette image">×</button></span>`).join("")}</div><span class="muted" style="font-size:11px">${refsOf(r).length} image${refsOf(r).length > 1 ? "s" : ""} de référence</span></div>` : ""}</td>
     <td><input type="text" class="e-name" id="e-name-${esc(r.id)}" value="${esc(r.name)}" maxlength="80" aria-label="Nom">
+        <input type="text" class="e-name-en" id="e-en-${esc(r.id)}" value="${esc(r.name_en || "")}" maxlength="80" placeholder="Nom anglais (jeu)" aria-label="Nom anglais" lang="en">
         <input type="text" class="e-colorname" id="e-cn-${esc(r.id)}" value="${esc(r.color_name)}" placeholder="Description de la couleur" aria-label="Description de la couleur"></td>
     <td><input type="text" class="e-cat" id="e-cat-${esc(r.id)}" value="${esc(r.category)}" list="catList" aria-label="Catégorie"></td>
     <td><input type="text" class="e-unit" id="e-unit-${esc(r.id)}" value="${esc(r.unit)}" aria-label="Unité" style="max-width:80px"></td>
@@ -2058,6 +2060,8 @@ $("#dbBody").addEventListener("click", async e => {
       name, category: v(".e-cat").value.trim(), unit: v(".e-unit").value.trim(), threshold: num(v(".e-min").value),
       color: color.dataset.touched || color.dataset.had ? color.value : "", color_name: v(".e-colorname").value.trim(),
     });
+    const en = v(".e-name-en") ? v(".e-name-en").value.trim() : (r.name_en || "");
+    if (en !== (r.name_en || "")) await rpc("set_resource_name_en", { p_id: r.id, p_name: en });
     dirty.delete(id); tr.classList.remove("dirty"); setStatus("");
     await loadResources();
   } catch (err) { setStatus(errText(err)); b.disabled = false; }

@@ -98,7 +98,7 @@ Deno.serve(async (req) => {
     }
     if (image.length > 7_000_000) return json({ error: "Image trop lourde (5 Mo maximum)." }, 413);
 
-    const { data: resources } = await sb.from("resources").select("id, name, unit, color, color_name, image, refs").order("name");
+    const { data: resources } = await sb.from("resources").select("id, name, name_en, unit, color, color_name, image, refs").order("name");
     // Bibliothèque d'images classées par écran. Si la table n'existe pas encore, on reprend image + refs.
     // screen_main (image choisie pour un écran, migration 011) : si la colonne manque, on relit sans elle.
     const readLib = (cols: string) => sb.from("reference_images").select(cols).order("created_at", { ascending: false });
@@ -148,7 +148,9 @@ Deno.serve(async (req) => {
     const known = (resources ?? [])
       .map((r) => {
         const c = [r.color_name, r.color].filter(Boolean).join(", ");
-        return `- ${r.name}${r.unit ? ` (${r.unit})` : ""}${c ? ` — couleur : ${c}` : ""}`;
+        // Nom anglais du jeu : une capture en anglais (« Iron ») doit être rattachée au nom du registre (« fer »).
+        const en = (r as { name_en?: string }).name_en;
+        return `- ${r.name}${en ? ` [en anglais : ${en}]` : ""}${r.unit ? ` (${r.unit})` : ""}${c ? ` — couleur : ${c}` : ""}`;
       })
       .join("\n") || "aucune pour l'instant";
 

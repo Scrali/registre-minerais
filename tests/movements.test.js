@@ -280,3 +280,24 @@ test("Aucune écriture directe : stock_operations et movements restent protégé
   assert.equal(seen.rows[0].n, 0);
   await rejects(as(db, alice, `select public._op_save('{}'::jsonb, 'adjust', 'x', '{}'::jsonb)`), /permission denied/);
 });
+
+test("Relevé complet : un lot lu dans une autre unité (objets au lieu de SCU) n'est jamais remis à zéro", async () => {
+  await scan(eve, "Ruin Station", [line(quanta, 742, 1.62, "SCU"), line(quanta, 359, 5.9, "SCU"), line(agri, 500, 2, "SCU")], { mode: "add" });
+  // Ascenseur de fret, inventaire complet : le cuivre est lu en objets (×2, ×3) ; l'Agricium n'apparaît plus.
+  const pv = await previewScan(eve, "Ruin Station", [line(quanta, 742, 2), line(quanta, 359, 3)], { coverage: "complete" });
+  assert.deepEqual(pv.unit_conflicts.map(c => [c.quality_key, c.unit, Number(c.quantity)]), [["359", "SCU", 5.9], ["742", "SCU", 1.62]]);
+  assert.deepEqual(pv.changes.filter(c => c.absent).map(c => [c.name, c.delta]), [["Agricium", -2]], "seul ce qui a vraiment disparu passe à 0");
+  await scan(eve, "Ruin Station", [line(quanta, 742, 2), line(quanta, 359, 3)], { coverage: "complete" });
+  assert.equal(await stock(eve, "Ruin Station", quanta, "742", "SCU"), 1.62);
+  assert.equal(await stock(eve, "Ruin Station", quanta, "359", "SCU"), 5.9);
+  assert.equal(await stock(eve, "Ruin Station", agri, "500", "SCU"), 0);
+});
+
+test("Nom anglais d'une ressource : droit catalogue, jamais en double", async () => {
+  const fer = await rpc(db, admin, "create_resource", [J({ name: "fer" }), "manuel", ""]);
+  await rejects(rpc(db, alice, "set_resource_name_en", [fer, "Iron"]), /catalogue/);
+  await rpc(db, admin, "set_resource_name_en", [fer, " Iron "]);
+  assert.equal((await db.query(`select name_en from resources where id = $1`, [fer])).rows[0].name_en, "Iron");
+  await rejects(rpc(db, admin, "set_resource_name_en", [agri, "iron"]), /autre ressource/);
+  await rejects(rpc(db, admin, "set_resource_name_en", [agri, "Quantainium"]), /autre ressource/);
+});
