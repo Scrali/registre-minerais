@@ -1843,6 +1843,23 @@ function renderBlueprints() {
   renderBpDetail();
   if (isAdmin() && bp.loaded) renderBpAdmin();
 }
+// Qualités en stock pour une matière de la recette, dans l'unité de la recette (cSCU convertis en SCU).
+// Vert : qualité suffisante pour la qualité visée ; grisé : en dessous. Les lots dans une autre unité sont signalés à part.
+function stockQualities(o) {
+  const byQ = {}, other = {};
+  for (const s of bpStocks()) {
+    if (s.resource_id !== o.resource_id) continue;
+    const v = BlueprintLogic.inUnit(num(s.quantity), s.unit || "", o.unit || "");
+    if (v == null) { const u = s.unit || "objets"; other[u] = num(other[u]) + num(s.quantity); continue; }
+    byQ[s.quality_key] = num(byQ[s.quality_key]) + v;
+  }
+  const ks = Object.keys(byQ).sort(byQdesc);
+  const ok = k => o.min_quality == null ? true : k === "-" ? o.min_quality <= 0 : +k >= o.min_quality;
+  const chips = ks.map(k => `<span class="lot${ok(k) ? " hi" : " low"}" title="${ok(k) ? "Qualité suffisante" : "Sous la qualité visée"}"><b>${k === "-" ? "Q?" : "Q" + k}</b> ${fmt(byQ[k])}${o.unit ? " " + esc(o.unit) : ""}</span>`).join("");
+  const rest = Object.entries(other).map(([u, v]) => `${fmt(v)} ${esc(u)}`).join(", ");
+  return (chips ? `<div class="lots">${chips}</div>` : "") + (rest ? `<div class="colordesc">+ ${rest} non comptés (autre unité)</div>` : "")
+    || '<div class="colordesc">rien en stock</div>';
+}
 function renderBpDetail() {
   const b = bp.list.find(x => x.id === bp.open);
   $("#bpDetail").hidden = !b; if (!b) return;
@@ -1874,7 +1891,7 @@ function renderBpDetail() {
     : `${esc(e.label)} <span class="${(e.k > 1) === (e.better !== "lower") && e.k !== 1 && e.better !== "neutral" ? "up" : e.k !== 1 && e.better !== "neutral" ? "down" : ""}">${e.k >= 1 ? "+" : "−"}${fmt(Math.abs(e.k - 1) * 100)} %</span>`).join("<br>");
   $("#bpIngBody").innerHTML = v.slots.map(s => s.options.map((o, k) => {
     const mapRow = bp.maps.find(m => m.api_uuid === o.api_uuid);
-    const reg = o.resource_id ? esc(resName(o.resource_id)) + ((resOf(o.resource_id) || {}).name_en ? ` <span class="muted" lang="en">(${esc(resOf(o.resource_id).name_en)})</span>` : "") : mapRow && mapRow.status === "suggested" && mapRow.resource_id
+    const reg = o.resource_id ? esc(resName(o.resource_id)) + ((resOf(o.resource_id) || {}).name_en ? ` <span class="muted" lang="en">(${esc(resOf(o.resource_id).name_en)})</span>` : "") + stockQualities(o) : mapRow && mapRow.status === "suggested" && mapRow.resource_id
       ? `<span class="bpunk">À valider : ${esc(resName(mapRow.resource_id))}</span>${isAdmin() ? ` <button type="button" class="linkbtn" data-okmap="${esc(o.api_uuid)}" data-res="${esc(mapRow.resource_id)}">Valider</button>` : ""}`
       : `<span class="muted">Aucune</span>${isAdmin() ? ' <button type="button" class="linkbtn" data-gomap>Choisir…</button>' : ""}`;
     const st_ = o.status === "alternative" ? '<span class="muted">alternative</span>' : o.status === "ok" ? '<span class="bpok">0</span>'
