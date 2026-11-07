@@ -1217,7 +1217,9 @@ $("#analyze").addEventListener("click", async () => {
 function matchTarget(name) {
   const n = norm(name); if (!n) return "new";
   let r = st.resources.find(x => norm(x.name) === n);
-  if (!r) r = st.resources.find(x => { const k = norm(x.name); return k.length > 3 && (k.includes(n) || n.includes(k)); });
+  // Correspondance partielle : jamais entre un minerai brut « X (Ore) » et la ressource raffinée « X ».
+  const ore = t => /[([]\s*(ore|raw|brut)\s*[)\]]|\bbrut\b/i.test(t);
+  if (!r) r = st.resources.find(x => { const k = norm(x.name); return ore(x.name) === ore(name) && k.length > 3 && (k.includes(n) || n.includes(k)); });
   return r ? r.id : "new";
 }
 
