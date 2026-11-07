@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="style.css?v=28">
+<link rel="stylesheet" href="style.css?v=29">
 </head>
 <body>
 
@@ -446,13 +446,20 @@
           <button type="button" id="bpClose">Fermer</button>
         </div>
       </div>
+      <div class="panel-b bpq">
+        <label for="bpQall">Qualité visée pour toutes les pièces</label>
+        <input type="range" id="bpQrange" min="0" max="1000" step="1" value="0" aria-label="Qualité visée (curseur)">
+        <input type="number" id="bpQall" min="0" max="1000" step="1" placeholder="minimum" class="qin">
+        <button type="button" class="linkbtn" id="bpQreset">Revenir au minimum de la recette</button>
+      </div>
       <div class="panel-b" id="bpVerdict"></div>
       <div class="scroll">
         <table>
-          <thead><tr><th>Emplacement</th><th>Matière</th><th class="num">Requis</th><th class="num">Q min</th><th>Ressource du registre</th><th class="num">Disponible</th><th class="num">Manquant</th></tr></thead>
+          <thead><tr><th>Emplacement</th><th>Matière</th><th class="num">Requis</th><th class="num">Q min</th><th class="num">Qualité visée</th><th>Effet de la qualité</th><th>Ressource du registre</th><th class="num">Disponible</th><th class="num">Manquant</th></tr></thead>
           <tbody id="bpIngBody"></tbody>
         </table>
       </div>
+      <div class="panel-b" id="bpStats" hidden></div>
       <div class="panel-b muted" style="font-size:13px" id="bpNotes"></div>
     </section>
 
@@ -675,9 +682,9 @@
 </dialog>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-<script src="config.js?v=28"></script>
-<script src="scanlogic.js?v=28"></script>
-<script src="blueprintlogic.js?v=28"></script>
-<script src="app.js?v=28"></script>
+<script src="config.js?v=29"></script>
+<script src="scanlogic.js?v=29"></script>
+<script src="blueprintlogic.js?v=29"></script>
+<script src="app.js?v=29"></script>
 </body>
 </html>

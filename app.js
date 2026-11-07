@@ -1715,7 +1715,7 @@ $("#rqBody").addEventListener("click", async e => {
 
 // ---------- onglet Blueprints (catalogue Star Citizen Wiki) ----------
 // Lecture seule pour les stocks : on compare la recette aux stocks visibles, rien n'est jamais retiré.
-const bp = { loaded: false, loading: null, list: [], ing: new Map(), mats: [], map: {}, maps: [], owned: [], runs: [], errors: [],
+const bp = { raw: new Map(), target: {}, loaded: false, loading: null, list: [], ing: new Map(), mats: [], map: {}, maps: [], owned: [], runs: [], errors: [],
   shown: 100, open: null, cache: null, ready: true };
 const BP_STATUS = { suggested: "Suggestion à valider", confirmed: "Validée", rejected: "Aucune correspondance", unmatched: "Non trouvée" };
 const bpStockScope = () => ($("#bpStock") || {}).value || (can("view_global") ? "org" : "me");
@@ -1846,8 +1846,15 @@ function renderBpDetail() {
   if (tiers.length > 1 && $("#bpTier").options.length !== tiers.length) $("#bpTier").innerHTML = tiers.map(t => `<option value="${t}">Palier ${t + 1}</option>`).join("");
   const tier = tiers.length > 1 ? Number($("#bpTier").value) || 0 : (tiers[0] || 0);
   const crafts = Math.max(1, Math.min(999, Math.floor(num($("#bpCrafts").value) || 1)));
-  const v = BlueprintLogic.compare(ings, bpStocks(), bp.map, { tier, crafts });
-  const max = v.craftable === null ? null : BlueprintLogic.maxCrafts(ings, bpStocks(), bp.map, { tier });
+  // Qualité visée : par pièce, sinon pour toutes ; jamais en dessous du minimum de la recette.
+  // Le stock n'est alors compté qu'à partir de cette qualité.
+  if (!bp.raw.has(b.current_recipe_id) && b.current_recipe_id) loadBpRaw(b.current_recipe_id);
+  const mods = BlueprintLogic.modifiersBySlot(bp.raw.get(b.current_recipe_id));
+  const qAll = $("#bpQall").value === "" ? null : Math.max(0, Math.min(1000, Math.round(num($("#bpQall").value))));
+  const target = key => bp.target[key] != null ? bp.target[key] : qAll;
+  const wanted = ings.map(i => { const t = target(i.slot_key); return t == null || i.min_quality == null ? i : { ...i, min_quality: Math.max(i.min_quality, t) }; });
+  const v = BlueprintLogic.compare(wanted, bpStocks(), bp.map, { tier, crafts });
+  const max = v.craftable === null ? null : BlueprintLogic.maxCrafts(wanted, bpStocks(), bp.map, { tier });
   $("#bpTitle").textContent = b.output_name || b.key;
   $("#bpMeta").innerHTML = `${esc(b.output_type_label || "")}${b.craft_time_seconds ? " · fabrication " + esc(craftTxt(b.craft_time_seconds)) : ""} · version ${esc(b.game_version || "?")} · <span class="num">${esc(b.key)}</span>${b.web_url ? ` · <a href="${esc(b.web_url)}" target="_blank" rel="noopener">fiche</a>` : ""}`;
   $("#bpMine").checked = bpOwners(b).includes(st.me && st.me.id);
@@ -1856,6 +1863,10 @@ function renderBpDetail() {
     : v.craftable === false ? `<span class="bpshort">Ressources manquantes pour ×${crafts}</span> : ${v.missing.filter(m => m.mapped).map(m => `${fmt(m.missing)} ${esc(m.unit || "objets")} de ${esc(m.name)}${m.min_quality ? " Q" + m.min_quality + "+" : ""}`).join(", ")}${v.missing.some(m => !m.mapped) ? ", plus des matières sans correspondance validée" : ""}.`
     : `<span class="bpunk">Indéterminé</span> : ${v.missing.some(m => !m.mapped) || v.slots.some(s => s.options.some(o => o.status === "unmapped")) ? "certaines matières n'ont pas de correspondance validée avec le registre" : "l'API ne fournit pas toutes les données (quantité ou qualité minimale)"}.`;
   const resName = id => (resOf(id) || {}).name || "?";
+  const apiMin = key => Math.max(0, ...ings.filter(i => i.slot_key === key && i.min_quality != null).map(i => i.min_quality));
+  const effAt = (key, q) => (mods[key] || []).map(m => ({ label: m.label, better: m.better_when, k: BlueprintLogic.modifierAt(m, q) }));
+  const effTxt = list => list.map(e => e.k == null ? `${esc(e.label)} <span class="muted">effet non fourni</span>`
+    : `${esc(e.label)} <span class="${(e.k > 1) === (e.better !== "lower") && e.k !== 1 && e.better !== "neutral" ? "up" : e.k !== 1 && e.better !== "neutral" ? "down" : ""}">${e.k >= 1 ? "+" : "−"}${fmt(Math.abs(e.k - 1) * 100)} %</span>`).join("<br>");
   $("#bpIngBody").innerHTML = v.slots.map(s => s.options.map((o, k) => {
     const mapRow = bp.maps.find(m => m.api_uuid === o.api_uuid);
     const reg = o.resource_id ? esc(resName(o.resource_id)) + ((resOf(o.resource_id) || {}).name_en ? ` <span class="muted" lang="en">(${esc(resOf(o.resource_id).name_en)})</span>` : "") : mapRow && mapRow.status === "suggested" && mapRow.resource_id
@@ -1868,10 +1879,27 @@ function renderBpDetail() {
       <td>${k === 0 ? esc(s.slot_name || s.slot_key) + (s.choice ? ` <span class="tag">au choix : ${s.pick} sur ${s.options.length}</span>` : "") : ""}</td>
       <td>${esc(o.name)} <span class="muted">${o.kind === "item" ? "objet" : "raffiné"}</span></td>
       <td class="num">${o.need_value == null ? "non fourni" : fmt(o.need_value) + " " + esc(o.unit || "objets")}</td>
-      <td class="num">${o.min_quality == null ? "non fournie" : o.min_quality}</td>
+      <td class="num">${(ings.find(i => i.slot_key === s.slot_key && i.option_index === o.option_index) || {}).min_quality ?? "non fournie"}</td>
+      <td class="num">${k === 0 ? `<input type="number" class="qin" min="0" max="1000" step="1" data-tq="${esc(s.slot_key)}" value="${bp.target[s.slot_key] ?? ""}" placeholder="${qAll ?? apiMin(s.slot_key)}" aria-label="Qualité visée pour ${esc(s.slot_name || s.slot_key)}">` : ""}</td>
+      <td class="bpeff">${k === 0 ? effTxt(effAt(s.slot_key, target(s.slot_key) ?? apiMin(s.slot_key))) || '<span class="muted">aucun</span>' : ""}</td>
       <td>${reg}</td><td class="num">${avail}</td><td class="num">${st_}</td></tr>`;
   }).join("")).join("");
-  $("#bpNotes").textContent = "Disponible : quantité de qualité suffisante dans les stocks comparés (cSCU convertis en SCU : 100 cSCU = 1 SCU ; les objets ne sont jamais convertis). "
+  // Résumé des effets par propriété (estimation : produit des effets de chaque pièce).
+  const props = new Map();
+  for (const s of v.slots) for (const e of effAt(s.slot_key, target(s.slot_key) ?? apiMin(s.slot_key))) {
+    if (!props.has(e.label)) props.set(e.label, { better: e.better, list: [] });
+    props.get(e.label).list.push({ slot: s.slot_name || s.slot_key, k: e.k });
+  }
+  $("#bpStats").hidden = !props.size;
+  $("#bpStats").innerHTML = props.size ? `<table><thead><tr><th>Propriété</th><th>Pièces</th><th class="num">Effet estimé</th></tr></thead><tbody>${[...props].map(([label, p]) => {
+    const known = p.list.every(x => x.k != null), tot = known ? p.list.reduce((a, x) => a * x.k, 1) : null;
+    return `<tr><td>${esc(label)}${p.better === "lower" ? ' <span class="muted">(plus bas = mieux)</span>' : p.better === "neutral" ? ' <span class="muted">(neutre)</span>' : ""}</td>
+      <td class="muted" style="font-size:13px">${p.list.map(x => `${esc(x.slot)} ${x.k == null ? "?" : (x.k >= 1 ? "+" : "−") + fmt(Math.abs(x.k - 1) * 100) + " %"}`).join(" · ")}</td>
+      <td class="num">${tot == null ? "inconnu" : (tot >= 1 ? "+" : "−") + fmt(Math.abs(tot - 1) * 100) + " %"}</td></tr>`;
+  }).join("")}</tbody></table>` : "";
+  $("#bpNotes").textContent = "Qualité visée : le stock n'est compté qu'à partir de cette qualité, et l'effet affiché est celui de l'API à cette qualité (interpolation linéaire, ou par segments quand l'API les donne). "
+    + "Quand plusieurs pièces touchent la même propriété, l'effet total est estimé en multipliant leurs effets. "
+    + "Disponible : quantité de qualité suffisante dans les stocks comparés (cSCU convertis en SCU : 100 cSCU = 1 SCU ; les objets ne sont jamais convertis). "
     + "Une qualité inconnue ne compte que si aucune qualité minimale n'est demandée. Un même lot n'est jamais compté pour deux emplacements. Ce calcul ne retire rien des stocks.";
 }
 function renderBpAdmin() {
@@ -1905,10 +1933,29 @@ $("#bpMore").addEventListener("click", () => { bp.shown += 200; renderBlueprints
 $("#bpBody").addEventListener("click", e => {
   const r = e.target.closest("[data-bp]"); if (!r) return;
   bp.open = Number(r.dataset.bp) === bp.open ? null : Number(r.dataset.bp);
-  $("#bpCrafts").value = 1; $("#bpTier").innerHTML = "";
+  $("#bpCrafts").value = 1; $("#bpTier").innerHTML = ""; bp.target = {}; $("#bpQall").value = bp.qAllApplied = ""; $("#bpQrange").value = 0;
   renderBlueprints(); if (bp.open) $("#bpDetail").scrollIntoView({ block: "nearest" });
 });
 $("#bpClose").addEventListener("click", () => { bp.open = null; renderBlueprints(); });
+// Extrait brut de la recette (effets de la qualité par pièce), chargé à la demande.
+async function loadBpRaw(id) {
+  bp.raw.set(id, null);
+  const { data } = await sb.from("sc_recipes").select("id, raw").eq("id", id).maybeSingle();
+  bp.raw.set(id, data ? data.raw : null);
+  renderBpDetail();
+}
+$("#bpQrange").addEventListener("input", () => { $("#bpQall").value = bp.qAllApplied = $("#bpQrange").value; bp.target = {}; renderBpDetail(); });
+// Ne recalcule que si la valeur a vraiment changé (sinon quitter le champ effacerait le réglage d'une pièce).
+$("#bpQall").addEventListener("change", () => {
+  if ($("#bpQall").value === (bp.qAllApplied ?? "")) return;
+  bp.qAllApplied = $("#bpQall").value; $("#bpQrange").value = $("#bpQall").value || 0; bp.target = {}; renderBpDetail();
+});
+$("#bpQreset").addEventListener("click", () => { $("#bpQall").value = bp.qAllApplied = ""; $("#bpQrange").value = 0; bp.target = {}; renderBpDetail(); });
+$("#bpIngBody").addEventListener("change", e => {
+  const i = e.target.closest("[data-tq]"); if (!i) return;
+  if (i.value === "") delete bp.target[i.dataset.tq]; else bp.target[i.dataset.tq] = Math.max(0, Math.min(1000, Math.round(num(i.value))));
+  renderBpDetail();
+});
 ["#bpCrafts", "#bpTier"].forEach(s => $(s).addEventListener("input", renderBpDetail));
 $("#bpMine").addEventListener("change", async () => {
   const b = bp.list.find(x => x.id === bp.open); if (!b) return;

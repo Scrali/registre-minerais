@@ -144,5 +144,35 @@
     return lo;
   }
 
-  root.BlueprintLogic = { compare, maxCrafts, slotsOf, inUnit: (q, u, w) => { const v = inUnit(q, u, w); return v == null ? null : fromMicro(v); } };
+  // Effet de la qualité sur une propriété, d'après l'API (modifiers d'un emplacement).
+  //  - linear : interpolation entre at_min_quality et at_max_quality sur quality_range (bornes tenues au-delà) ;
+  //  - value_segments : interpolation dans le segment qui contient la qualité ;
+  //  - autre type, ou valeurs absentes : effet inconnu (null), jamais inventé.
+  // Renvoie le multiplicateur (1 = aucun effet).
+  function modifierAt(mod, q) {
+    if (!mod || q == null || !isFinite(q)) return null;
+    const lerp = (a, b, x0, x1, x) => x1 === x0 ? b : a + (b - a) * (Math.min(x1, Math.max(x0, x)) - x0) / (x1 - x0);
+    if (mod.value_range_type !== "linear") return null;
+    const seg = Array.isArray(mod.value_segments) ? mod.value_segments.filter(s => s && isFinite(s.modifier_at_start) && isFinite(s.modifier_at_end)) : [];
+    if (seg.length) {
+      const sorted = seg.slice().sort((a, b) => a.quality_min - b.quality_min);
+      const s = sorted.find(x => q >= x.quality_min && q <= x.quality_max)
+        || (q < sorted[0].quality_min ? sorted[0] : sorted[sorted.length - 1]);
+      return lerp(s.modifier_at_start, s.modifier_at_end, s.quality_min, s.quality_max, q);
+    }
+    const r = mod.quality_range || {}, m = mod.modifier_range || {};
+    if (![r.min, r.max, m.at_min_quality, m.at_max_quality].every(v => v != null && isFinite(v))) return null;
+    return lerp(m.at_min_quality, m.at_max_quality, r.min, r.max, q);
+  }
+  // Effets par emplacement à partir des requirement_groups bruts de l'API : { slot_key: [modifiers] }.
+  function modifiersBySlot(raw) {
+    const out = {};
+    for (const g of (raw && Array.isArray(raw.requirement_groups) ? raw.requirement_groups : [])) {
+      const k = g.key || g.name; if (!k) continue;
+      out[k] = (g.modifiers || []).filter(m => m && m.label);
+    }
+    return out;
+  }
+
+  root.BlueprintLogic = { modifierAt, modifiersBySlot, compare, maxCrafts, slotsOf, inUnit: (q, u, w) => { const v = inUnit(q, u, w); return v == null ? null : fromMicro(v); } };
 })(typeof globalThis !== "undefined" ? globalThis : window);

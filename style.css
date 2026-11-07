@@ -300,3 +300,8 @@ button.stat.statlink:hover span{color:var(--accent)}
 .log li.undone{opacity:.65}
 #bpCrafts{width:72px}
 .bpok{color:var(--ok);font-weight:600}.bpshort{color:var(--crit);font-weight:600}.bpunk{color:var(--warn);font-weight:600}
+.bpq{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+.bpq label{flex-direction:row;color:var(--ink);font-size:14px}
+.bpq input[type=range]{flex:1;min-width:160px;accent-color:var(--accent)}
+.bpq .qin,#bpIngBody .qin{width:80px}
+.bpeff{font-size:13px;white-space:nowrap}.bpeff .up{color:var(--ok)}.bpeff .down{color:var(--crit)}

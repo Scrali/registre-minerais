@@ -80,3 +80,17 @@ test("Le calcul ne modifie pas les stocks passés en entrée", () => {
   compare(quik, stocks, map, { crafts: 3 }); maxCrafts(quik, stocks, map);
   assert.equal(JSON.stringify(stocks), copy);
 });
+
+test("Effet de la qualité : linéaire, par segments, et inconnu quand l'API ne le donne pas", () => {
+  const { modifierAt, modifiersBySlot } = globalThis.BlueprintLogic;
+  const lin = { value_range_type: "linear", quality_range: { min: 0, max: 1000 }, modifier_range: { at_min_quality: 0.9, at_max_quality: 1.1 } };
+  assert.equal(modifierAt(lin, 500), 1); assert.equal(+modifierAt(lin, 1000).toFixed(6), 1.1); assert.equal(+modifierAt(lin, 0).toFixed(6), 0.9);
+  const half = { value_range_type: "linear", quality_range: { min: 500, max: 1000 }, modifier_range: { at_min_quality: 1, at_max_quality: 1.2 } };
+  assert.equal(modifierAt(half, 200), 1, "sous la plage : borne basse");
+  const seg = { value_range_type: "linear", quality_range: { min: 0, max: 500 }, modifier_range: { at_min_quality: 0.8, at_max_quality: 1 },
+    value_segments: [{ quality_min: 0, quality_max: 500, modifier_at_start: 0.8, modifier_at_end: 1 }, { quality_min: 501, quality_max: 1000, modifier_at_start: 1, modifier_at_end: 1.2 }] };
+  assert.equal(+modifierAt(seg, 250).toFixed(6), 0.9); assert.equal(+modifierAt(seg, 1000).toFixed(6), 1.2);
+  assert.equal(modifierAt({ value_range_type: "linear_integer_additive", value_segments: [] }, 500), null);
+  assert.equal(modifierAt({ value_range_type: null, quality_range: { min: null, max: null }, modifier_range: {} }, 500), null);
+  assert.deepEqual(Object.keys(modifiersBySlot({ requirement_groups: [{ key: "FRAME", modifiers: [lin] }, { name: "Emitter", modifiers: [] }] })), ["FRAME", "Emitter"]);
+});
