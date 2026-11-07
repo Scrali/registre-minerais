@@ -1002,6 +1002,8 @@ function capMsg(t, err) { const el = $("#capMsg"); el.textContent = t; el.classN
 const MAX_SHOTS = 12;
 let shotSeq = 0;
 function addImages(files) {
+  // Vidéo (survol des caisses) : lecture gratuite des infobulles, image par image.
+  for (const f of [...(files || [])].filter(f => f && f.type && f.type.startsWith("video/"))) ocr.queue = (ocr.queue || Promise.resolve()).then(() => ocrVideo(f));
   const imgs = [...(files || [])].filter(f => f && f.type && f.type.startsWith("image/"));
   if (!imgs.length) return;
   const room = MAX_SHOTS - st.shots.length;
@@ -1026,12 +1028,13 @@ function renderShots() {
   $("#thumbs").innerHTML = st.shots.map((s, i) => {
     const state = s.status === "done" ? `<span class="ok">${s.n} lot${s.n > 1 ? "s" : ""}</span>`
       : s.status === "busy" ? "lecture…" : s.status === "error" ? `<span class="bad" title="${esc(s.err)}">échec</span>` : "à analyser";
-    return `<div class="thumb"><img src="${s.url}" alt="Page ${i + 1}">
+    return `<div class="thumb">${s.url ? `<img src="${s.url}" alt="Page ${i + 1}">` : '<div class="hint" style="padding:20px">vidéo…</div>'}${s.video ? '<span class="tag" style="position:absolute;left:4px;top:4px">vidéo</span>' : ""}
       <div class="tcap"><span>Page ${i + 1}</span>${state}</div>
       <button class="tdel" data-del="${s.id}" title="Retirer cette capture" aria-label="Retirer la page ${i + 1}" ${s.status === "busy" ? "disabled" : ""}>×</button></div>`;
   }).join("");
   const p = pendingShots().length, busy = st.shots.some(s => s.status === "busy");
   $("#analyze").disabled = !p || busy || !can("scan");
+  $("#ocrRead").hidden = !p || busy;
   if (p && !can("scan")) capMsg("Tu n'as pas le droit d'analyser des captures avec l'IA : demande-le à un administrateur de ton organisation.", true);
   const retry = p && pendingShots().every(s => s.status === "error");
   $("#analyze").textContent = retry ? (p > 1 ? `Réessayer les ${p} captures en échec` : "Réessayer la capture en échec")
@@ -1042,7 +1045,7 @@ $("#thumbs").addEventListener("click", e => {
   const b = e.target.closest("[data-del]"); if (!b) return;
   const id = +b.dataset.del, s = st.shots.find(x => x.id === id);
   if (!s || s.status === "busy") return;
-  URL.revokeObjectURL(s.url);
+  if (s.url && s.url.startsWith("blob:")) URL.revokeObjectURL(s.url);
   st.shots = st.shots.filter(x => x !== s);
   st.items = st.items.filter(it => it.shot !== id);
   if (!st.shots.length) return clearCapture();
@@ -1067,7 +1070,7 @@ async function fingerprint(file) {
   return [...new Uint8Array(h)].map(b => b.toString(16).padStart(2, "0")).join("");
 }
 function clearCapture() {
-  for (const s of st.shots) URL.revokeObjectURL(s.url);
+  for (const s of st.shots) if (s.url && s.url.startsWith("blob:")) URL.revokeObjectURL(s.url);
   st.shots = []; st.items = []; st.reasons = {}; st.scanKey = null;
   st.modeTouched = false; setCapMode($("#capTerminal").value === "raffinerie" ? "add" : "update");
   hideDiff();
@@ -1267,6 +1270,7 @@ function renderReview() {
         ? `<div class="rv-pics"><figure><img class="crop" src="${it.crop}" alt="Case lue sur la capture"><figcaption>Capture</figcaption></figure>`
           + (refSrc ? `<figure><img class="crop ref" src="${esc(refSrc)}" alt="" title="${esc(r.name)} : ${sr ? `image choisie pour l'écran « ${esc(TERM[sr.terminal_type])} »` : "image principale (aucune image pour cet écran)"}${views.length > 1 ? ` · ${views.length} images en tout` : ""}"><figcaption>${esc(refCap)}</figcaption></figure>` : `<figure><span class="crop ref none">?</span><figcaption>Aucune réf.</figcaption></figure>`)
           + "</div>"
+        : it.proof ? `<div class="rv-pics"><figure><img class="proof" src="${it.proof}" alt="Infobulle lue"><figcaption>Infobulle lue</figcaption></figure></div>`
         : swatch(it.hex, it.color);
       const warn = [];
       if (it.dup) warn.push('<span class="tag warn" title="La même suite de cases termine la page précédente : cette case est sans doute déjà comptée">Déjà vue page précédente ?</span>');
@@ -1290,6 +1294,243 @@ function renderReview() {
   $("#compare").textContent = n ? `Comparer ${n} lot${n > 1 ? "s" : ""} avec le stock enregistré` : "Aucune ligne cochée";
   $("#compare").disabled = !n;
 }
+
+// ---------- caisses de minerai : lecture gratuite des infobulles (OCR dans le navigateur, sans IA) ----------
+// Tesseract.js est chargé à la demande depuis un CDN ; l'image ne quitte jamais l'ordinateur.
+const OCR_MAX = 60;
+const ocr = { worker: null, loading: null, dir: null, timer: null, seen: new Set(), since: 0, last: null };
+function ocrMsg(t, err) { const el = $("#ocrMsg"); el.textContent = t; el.className = err ? "err" : "muted"; el.style.fontSize = "13px"; }
+function loadScript(src) {
+  return new Promise((ok, ko) => { const s = document.createElement("script"); s.src = src; s.onload = ok; s.onerror = () => ko(new Error("Chargement impossible : " + src)); document.head.appendChild(s); });
+}
+async function ocrWorker() {
+  if (ocr.worker) return ocr.worker;
+  if (!ocr.loading) ocr.loading = (async () => {
+    ocrMsg("Préparation de la lecture (une seule fois, quelques Mo)…");
+    if (!window.Tesseract) await loadScript("https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js");
+    ocr.worker = await Tesseract.createWorker(["fra", "eng"], 1);
+    return ocr.worker;
+  })().catch(e => { ocr.loading = null; throw e; });
+  return ocr.loading;
+}
+// Repère la ligne de contenu de l'infobulle : l'étiquette violette du nom (« Cuivre (M) »).
+// Renvoie un rectangle dans l'image d'origine, ou null (on lit alors l'image entière).
+function findTooltipLine(bmp) {
+  const k = 4, w = Math.ceil(bmp.width / k), h = Math.ceil(bmp.height / k);
+  const c = document.createElement("canvas"); c.width = w; c.height = h;
+  const g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(bmp, 0, 0, w, h);
+  const d = g.getImageData(0, 0, w, h).data, rows = new Array(h).fill(0), pts = [];
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = (y * w + x) * 4, r = d[i] / 255, gg = d[i + 1] / 255, b = d[i + 2] / 255;
+    const mx = Math.max(r, gg, b), mn = Math.min(r, gg, b), s = mx ? (mx - mn) / mx : 0;
+    let hue = 0;
+    if (mx !== mn) hue = mx === r ? 60 * (((gg - b) / (mx - mn)) % 6) : mx === gg ? 60 * ((b - r) / (mx - mn) + 2) : 60 * ((r - gg) / (mx - mn) + 4);
+    if (hue < 0) hue += 360;
+    if (hue >= 280 && hue <= 330 && s > 0.45 && mx > 0.35) { rows[y]++; pts.push([x, y]); }
+  }
+  let best = -1, bestN = 2;
+  for (let y = 0; y < h; y++) if (rows[y] > bestN) { bestN = rows[y]; best = y; }
+  if (best < 0) return null;
+  const near = pts.filter(([, y]) => Math.abs(y - best) <= 4);
+  const x0 = Math.min(...near.map(p => p[0])), y0 = Math.min(...near.map(p => p[1])), y1 = Math.max(...near.map(p => p[1]));
+  const left = Math.max(0, (x0 - 3) * k), top = Math.max(0, (y0 - 3) * k), bottom = Math.min(bmp.height, (y1 + 4) * k);
+  const width = Math.min(bmp.width - left, Math.round(bmp.width * 0.16));
+  return { x: left, y: top, w: width, h: bottom - top };
+}
+// Image préparée pour l'OCR : agrandie, en niveaux de gris, texte clair rendu foncé sur fond blanc.
+function ocrCanvas(bmp, r, scale) {
+  const c = document.createElement("canvas"); c.width = Math.round(r.w * scale); c.height = Math.round(r.h * scale);
+  const g = c.getContext("2d", { willReadFrequently: true }); g.imageSmoothingEnabled = true;
+  g.drawImage(bmp, r.x, r.y, r.w, r.h, 0, 0, c.width, c.height);
+  const im = g.getImageData(0, 0, c.width, c.height), d = im.data;
+  for (let i = 0; i < d.length; i += 4) { const l = 0.3 * d[i] + 0.59 * d[i + 1] + 0.11 * d[i + 2]; const v = l > 150 ? 0 : 255; d[i] = d[i + 1] = d[i + 2] = v; }
+  g.putImageData(im, 0, 0);
+  return c;
+}
+async function readTooltip(file) {
+  const bmp = await createImageBitmap(file);
+  try { return await readTooltipBitmap(bmp, findTooltipLine(bmp), true); } finally { bmp.close && bmp.close(); }
+}
+async function readTooltipBitmap(bmp, line, fallback) {
+  const w = await ocrWorker();
+  let found = null, proof = null;
+  if (line) {
+    await w.setParameters({ tessedit_pageseg_mode: "7" });
+    const { data } = await w.recognize(ocrCanvas(bmp, line, 3));
+    found = OcrLogic.parseTooltip(data.text);
+    if (found) found.confidence = (data.confidence || 0) / 100;
+    const p = document.createElement("canvas"); p.width = Math.min(320, line.w); p.height = Math.round(line.h * p.width / line.w);
+    p.getContext("2d").drawImage(bmp, line.x, line.y, line.w, line.h, 0, 0, p.width, p.height);
+    proof = p.toDataURL("image/jpeg", 0.85);
+  }
+  if (!found && fallback) {
+    // Repli : toute l'image (plus lent), lecture des blocs de texte épars.
+    await w.setParameters({ tessedit_pageseg_mode: "11" });
+    const { data } = await w.recognize(ocrCanvas(bmp, { x: 0, y: 0, w: bmp.width, h: bmp.height }, Math.min(2, 2600 / bmp.width)));
+    found = OcrLogic.parseTooltip(data.text);
+    if (found) found.confidence = Math.min(0.6, (data.confidence || 0) / 100);
+  }
+  return found ? { ...found, proof } : null;
+}
+const ocrShots = () => st.shots.filter(s => s.ocr);
+// Ajoute une caisse lue à la liste à vérifier. Même caisse lue deux fois de suite : décochée (doublon probable).
+function pushOcrItem(r, s, at, windowMs) {
+  const name = r.name.replace(/\s*\((?:M|Ore|Raw)\)\s*$/i, "").trim();
+  const it = { name, quality: String(r.quality), qty: r.qty, unit: "SCU", color: "", hex: "", by: "nom", on: true, target: matchTarget(name),
+    shot: s.id, crop: null, proof: r.proof, box: null, confidence: r.confidence ?? null, group: norm(name), ocr: true };
+  const prev = st.items.find(x => x.group === it.group);
+  if (prev) { it.name = prev.name; it.target = prev.target; }
+  const read = { name, quality: r.quality, qty: r.qty, at };
+  if (OcrLogic.sameRead(ocr.last, read, windowMs)) { it.on = false; it.dup = true; }
+  ocr.last = read;
+  st.items.push(it);
+  return it;
+}
+// ---------- vidéo : une seule vidéo en survolant les caisses, chaque nouvelle infobulle est lue ----------
+const VIDEO_STEP = 0.25, VIDEO_MAX_READS = 120;
+async function ocrVideo(file) {
+  const shot = { id: ++shotSeq, file, url: "", status: "busy", n: 0, err: "", observedAt: file.lastModified || Date.now(), ocr: true, video: true };
+  st.shots.push(shot);
+  fingerprint(file).then(h => { shot.fp = h; }).catch(() => {});
+  if (!st.modeTouched && capMode() === "update") setCapMode("add");
+  hideDiff(); renderShots();
+  const v = document.createElement("video"); v.muted = true; v.preload = "auto"; v.src = URL.createObjectURL(file);
+  try {
+    await new Promise((ok, ko) => { v.onloadeddata = ok; v.onerror = () => ko(new Error("Vidéo illisible par le navigateur (essaie un MP4).")); });
+    await ocrWorker();
+    const dur = v.duration, seek = t => new Promise(ok => { v.onseeked = ok; v.currentTime = t; });
+    const fs = { prevLine: null, prevSig: "" }; let reads = 0, n = 0;
+    for (let t = 0; t < dur && reads < VIDEO_MAX_READS; t += VIDEO_STEP) {
+      if (!st.shots.includes(shot)) return;
+      await seek(t);
+      const bmp = await createImageBitmap(v);
+      if (!shot.url) { const c = document.createElement("canvas"); c.width = 320; c.height = Math.round(320 * bmp.height / bmp.width); c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height); shot.url = c.toDataURL("image/jpeg", 0.7); renderShots(); }
+      const got = await frameTooltip(bmp, shot, fs, t * 1000);
+      if (got) { reads++; if (got.added) { n++; shot.n = n; ocrMsg(`Vidéo : ${n} caisse${n > 1 ? "s" : ""} lue${n > 1 ? "s" : ""} (${Math.round(t)} s / ${Math.round(dur)} s)…`); } }
+      bmp.close && bmp.close();
+    }
+    shot.status = n ? "done" : "error"; shot.n = n;
+    if (!n) shot.err = "Aucune infobulle de caisse lisible dans la vidéo.";
+    ocrMsg(n ? `Vidéo lue : ${n} caisse${n > 1 ? "s" : ""}. Vérifie les valeurs dans le tableau avant d'enregistrer.` : shot.err, !n);
+  } catch (err) { shot.status = "error"; shot.err = errText(err); ocrMsg(shot.err, true); }
+  finally { URL.revokeObjectURL(v.src); renderShots(); }
+}
+// Une image (vidéo ou direct) : lit l'infobulle seulement si elle vient d'apparaître, a bougé (autre caisse) ou a changé.
+// Renvoie null si rien de nouveau, sinon { added } (false si c'est la même caisse que la précédente).
+async function frameTooltip(bmp, shot, fs, at) {
+  const line = findTooltipLine(bmp);
+  const sig = line ? lineSig(bmp, line) : "";
+  const fresh = line && (!fs.prevLine || Math.abs(line.x - fs.prevLine.x) + Math.abs(line.y - fs.prevLine.y) > 24 || sigDiff(sig, fs.prevSig) > 0.12);
+  fs.prevLine = line; fs.prevSig = sig;
+  if (!fresh) return null;
+  const r = await readTooltipBitmap(bmp, line, false);
+  if (!r || (ocr.last && ocr.last.video === shot.id && OcrLogic.sameRead(ocr.last, { ...r, at }, 1e9))) return { added: false };
+  pushOcrItem(r, shot, at, 1e9); ocr.last.video = shot.id;
+  st.items.sort((a, b) => shotPage(a.shot) - shotPage(b.shot)); renderReview();
+  return { added: true };
+}
+// ---------- lecture en direct : le site regarde la fenêtre du jeu (partage d'écran du navigateur), sans logiciel ----------
+const live = { stream: null, video: null, timer: null, busy: false, shot: null, fs: null, n: 0 };
+async function startLive() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) return ocrMsg("Ton navigateur ne permet pas le partage d'écran : utilise Chrome, Edge ou Firefox.", true);
+  try { live.stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 5 }, audio: false }); } catch (_) { return; }
+  live.video = document.createElement("video"); live.video.muted = true; live.video.srcObject = live.stream;
+  await live.video.play().catch(() => {});
+  live.shot = { id: ++shotSeq, file: null, url: "", status: "busy", n: 0, err: "", observedAt: Date.now(), ocr: true, video: true, live: true };
+  st.shots.push(live.shot); live.fs = { prevLine: null, prevSig: "" }; live.n = 0;
+  if (!st.modeTouched && capMode() === "update") setCapMode("add");
+  hideDiff(); renderShots();
+  $("#ocrLive").hidden = true; $("#ocrLiveStop").hidden = false;
+  live.stream.getVideoTracks()[0].addEventListener("ended", stopLive);
+  ocrMsg("Lecture en direct : survole chaque caisse jusqu'à l'apparition de son infobulle. Préparation…");
+  await ocrWorker().catch(err => ocrMsg(errText(err), true));
+  ocrMsg("Lecture en direct active : survole chaque caisse environ une seconde, puis clique sur « Arrêter ».");
+  live.timer = setInterval(liveTick, 300);
+}
+async function liveTick() {
+  if (live.busy || !live.video || live.video.readyState < 2) return;
+  live.busy = true;
+  try {
+    const bmp = await createImageBitmap(live.video);
+    if (!live.shot.url) { const c = document.createElement("canvas"); c.width = 320; c.height = Math.round(320 * bmp.height / bmp.width); c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height); live.shot.url = c.toDataURL("image/jpeg", 0.7); renderShots(); }
+    const got = await frameTooltip(bmp, live.shot, live.fs, Date.now());
+    bmp.close && bmp.close();
+    if (got && got.added) { live.n++; live.shot.n = live.n; ocrMsg(`Lecture en direct : ${live.n} caisse${live.n > 1 ? "s" : ""} lue${live.n > 1 ? "s" : ""}. Continue, ou clique sur « Arrêter ».`); }
+    if (st.items.filter(i => i.shot === live.shot.id).length >= VIDEO_MAX_READS) stopLive();
+  } catch (err) { ocrMsg(errText(err), true); }
+  live.busy = false;
+}
+function stopLive() {
+  clearInterval(live.timer); live.timer = null;
+  if (live.stream) live.stream.getTracks().forEach(t => t.stop());
+  live.stream = null; live.video = null;
+  if (live.shot) { live.shot.status = live.n ? "done" : "error"; if (!live.n) live.shot.err = "Aucune infobulle lue."; }
+  $("#ocrLive").hidden = false; $("#ocrLiveStop").hidden = true; renderShots();
+  if (live.shot) ocrMsg(live.n ? `Lecture terminée : ${live.n} caisse${live.n > 1 ? "s" : ""}. Vérifie les valeurs dans le tableau avant d'enregistrer.` : "Lecture arrêtée : aucune infobulle lue.", !live.n);
+  live.shot = null;
+}
+$("#ocrLive").addEventListener("click", startLive);
+$("#ocrLiveStop").addEventListener("click", stopLive);
+// Empreinte grossière de la ligne de l'infobulle (pour repérer un changement de contenu sans relancer l'OCR).
+function lineSig(bmp, r) {
+  const c = document.createElement("canvas"); c.width = 48; c.height = 6;
+  const g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(bmp, r.x, r.y, r.w, r.h, 0, 0, 48, 6);
+  const d = g.getImageData(0, 0, 48, 6).data; let s = "";
+  for (let i = 0; i < d.length; i += 4) s += (0.3 * d[i] + 0.59 * d[i + 1] + 0.11 * d[i + 2]) > 150 ? "1" : "0";
+  return s;
+}
+const sigDiff = (a, b) => { if (!a || !b || a.length !== b.length) return 1; let n = 0; for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) n++; return n / a.length; };
+async function ocrShot(s) {
+  s.status = "busy"; renderShots();
+  try {
+    const r = await readTooltip(s.file);
+    if (!st.shots.includes(s)) return;
+    if (!r) { s.status = "error"; s.err = "Aucune infobulle de caisse lisible sur cette capture."; }
+    else { pushOcrItem(r, s, s.observedAt, 4000); s.status = "done"; s.n = 1; }
+  } catch (err) { s.status = "error"; s.err = errText(err); }
+  renderShots();
+  if (st.items.length) { st.items.sort((a, b) => shotPage(a.shot) - shotPage(b.shot)); renderReview(); }
+  const done = ocrShots().filter(x => x.status === "done").length, bad = ocrShots().filter(x => x.status === "error").length;
+  ocrMsg(`${done} caisse${done > 1 ? "s" : ""} lue${done > 1 ? "s" : ""}${bad ? ` · ${bad} capture${bad > 1 ? "s" : ""} sans infobulle lisible (survole la caisse jusqu'à l'apparition de l'infobulle)` : ""}. Vérifie les valeurs dans le tableau avant d'enregistrer.`, bad > 0 && !done);
+}
+function addOcrFile(file) {
+  if (st.shots.length >= OCR_MAX) { ocrMsg(`${OCR_MAX} captures au maximum à la fois : enregistre celles-ci, puis continue.`, true); return; }
+  const shot = { id: ++shotSeq, file, url: URL.createObjectURL(file), status: "new", n: 0, err: "", observedAt: file.lastModified || Date.now(), ocr: true };
+  st.shots.push(shot);
+  fingerprint(file).then(h => { shot.fp = h; }).catch(() => {});
+  if (!st.modeTouched && capMode() === "update") setCapMode("add");
+  hideDiff();
+  ocr.queue = (ocr.queue || Promise.resolve()).then(() => ocrShot(shot));
+}
+async function pollCaptures() {
+  if (!ocr.dir) return;
+  try {
+    for await (const [name, h] of ocr.dir.entries()) {
+      if (h.kind !== "file" || !/\.(png|jpe?g|webp)$/i.test(name) || ocr.seen.has(name)) continue;
+      const f = await h.getFile();
+      ocr.seen.add(name);
+      if (f.lastModified >= ocr.since) addOcrFile(f);
+    }
+  } catch (err) { ocrMsg("Lecture du dossier impossible : " + errText(err), true); stopWatch(); }
+}
+function stopWatch() { clearInterval(ocr.timer); ocr.timer = null; ocr.dir = null; $("#ocrWatch").hidden = false; $("#ocrStop").hidden = true; }
+$("#ocrWatch").addEventListener("click", async () => {
+  if (!window.showDirectoryPicker) return ocrMsg("Ton navigateur ne permet pas de surveiller un dossier : utilise Chrome ou Edge, ou colle tes captures puis clique sur « Lire les infobulles ».", true);
+  try { ocr.dir = await window.showDirectoryPicker({ id: "captures-sc", mode: "read" }); } catch (_) { return; }
+  ocr.since = Date.now() - 2000; ocr.seen = new Set();
+  for await (const [name] of ocr.dir.entries()) ocr.seen.add(name);   // les anciennes captures sont ignorées
+  $("#ocrWatch").hidden = true; $("#ocrStop").hidden = false;
+  ocr.timer = setInterval(pollCaptures, 1500);
+  ocrMsg(`Surveillance du dossier « ${ocr.dir.name} » : en jeu, survole une caisse et appuie sur Win+Impr. écran.`);
+  ocrWorker().then(() => ocrMsg(`Prêt : surveillance du dossier « ${ocr.dir.name} ».`)).catch(err => ocrMsg(errText(err), true));
+});
+$("#ocrStop").addEventListener("click", () => { stopWatch(); ocrMsg("Surveillance arrêtée."); });
+document.addEventListener("visibilitychange", () => { if (!document.hidden) pollCaptures(); });
+// Captures collées ou déposées : lecture gratuite au lieu de l'analyse par l'IA.
+$("#ocrRead").addEventListener("click", () => {
+  for (const s of pendingShots()) { s.ocr = true; ocr.queue = (ocr.queue || Promise.resolve()).then(() => ocrShot(s)); }
+});
+
 // « Séparer » : ce lot quitte son groupe de couleur et prend un nom à lui.
 let splitSeq = 0;
 $("#reviewBody").addEventListener("click", async e => {

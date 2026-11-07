@@ -307,3 +307,5 @@ button.stat.statlink:hover span{color:var(--accent)}
 .bpeff{font-size:13px;white-space:nowrap}.bpeff .up{color:var(--ok)}.bpeff .down{color:var(--crit)}
 input.needqty{border-color:var(--warn);background:color-mix(in srgb,var(--warn) 12%,var(--bg))}
 .lot.low{opacity:.5}
+.ocrbox{border:1px dashed var(--line);border-radius:var(--r);padding:10px;display:flex;flex-direction:column;gap:6px;margin-top:6px}
+.rv-pics img.proof{width:180px;max-width:100%;height:auto;border-radius:4px;border:1px solid var(--line)}

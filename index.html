@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="style.css?v=31">
+<link rel="stylesheet" href="style.css?v=32">
 </head>
 <body>
 
@@ -122,7 +122,7 @@
           </div>
           <div id="thumbs" class="thumbs" hidden></div>
           <div id="dropMore" class="hint" hidden>Colle (<kbd>Ctrl</kbd>+<kbd>V</kbd>) ou glisse la page suivante pour l'ajouter</div>
-          <input type="file" id="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden>
+          <input type="file" id="file" accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/webm" multiple hidden>
         </div>
         <div class="cap-side">
           <label id="capOwnerBox" hidden>Inventaire de (administrateur)
@@ -173,6 +173,19 @@
             <button id="clearCap" hidden>Tout effacer</button>
           </div>
           <div id="capMsg" class="muted"></div>
+          <div class="ocrbox">
+            <div><strong>Caisses de minerai : lecture gratuite des infobulles</strong> <span class="tag">bêta</span></div>
+            <div class="hint"><strong>Le plus simple, sans aucun logiciel :</strong> clique sur « Lire le jeu en direct », choisis la fenêtre de Star Citizen (jeu en mode « Fenêtré sans bordure »), puis survole chaque caisse environ une seconde. Le site lit le nom, la qualité et le contenu en SCU de chaque infobulle, gratuitement et sans IA. Idéal avec le site sur un deuxième écran.</div>
+            <div class="hint">Autres façons : <kbd>Win</kbd>+<kbd>Impr. écran</kbd> sur chaque caisse avec « Surveiller mon dossier de captures » (dossier <em>Images › Captures d'écran</em>), ou dépose une vidéo MP4 enregistrée avec l'outil de ton choix. Fonctionne aussi avec des captures collées.</div>
+            <div class="row">
+              <button type="button" class="primary" id="ocrLive">Lire le jeu en direct</button>
+              <button type="button" class="danger" id="ocrLiveStop" hidden>Arrêter la lecture</button>
+              <button type="button" id="ocrWatch">Surveiller mon dossier de captures</button>
+              <button type="button" id="ocrStop" hidden>Arrêter la surveillance</button>
+              <button type="button" id="ocrRead" hidden>Lire les infobulles (gratuit)</button>
+            </div>
+            <div id="ocrMsg" class="muted" style="font-size:13px"></div>
+          </div>
         </div>
       </div>
 
@@ -682,9 +695,10 @@
 </dialog>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-<script src="config.js?v=31"></script>
-<script src="scanlogic.js?v=31"></script>
-<script src="blueprintlogic.js?v=31"></script>
-<script src="app.js?v=31"></script>
+<script src="config.js?v=32"></script>
+<script src="scanlogic.js?v=32"></script>
+<script src="blueprintlogic.js?v=32"></script>
+<script src="ocrlogic.js?v=32"></script>
+<script src="app.js?v=32"></script>
 </body>
 </html>
