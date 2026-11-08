@@ -1613,6 +1613,11 @@ async function frameTooltip(bmp, shot, fs, at) {
     }
     if (fs.counters) {
       fs.diag = fs.diag || { frames: 0, maxEdges: 0, clicks: 0, tips: 0 };
+      // Dernière image où une infobulle était visible : la caisse survolée juste avant le clic (le jeu masque
+      // l'infobulle au moment du clic).
+      const prevTip = fs.tipBmp ? { bmp: fs.tipBmp, line: fs.tipLine, at: fs.tipAt } : null;
+      if (line) { const copy = await createImageBitmap(bmp); if (fs.tipBmp && fs.tipBmp !== copy) { const old = fs.tipBmp; setTimeout(() => old.close && old.close(), 3000); }
+        fs.tipBmp = copy; fs.tipLine = line; fs.tipAt = at; }
       fs.diag.frames++; if (line) fs.diag.tips++; fs.diag.counters = fs.counters.map(c => c.n).join(" / ");
       for (const c of fs.counters) {
         const sig = counterCanvas(bmp, c.r, true);
@@ -1624,7 +1629,7 @@ async function frameTooltip(bmp, shot, fs, at) {
         const n = v1 != null && v1 === v2 ? v1 : (v1 == null) !== (v2 == null) && (plausible(one) || c.n == null) ? one : null;
         olog(`compteur ${c.r.x},${c.r.y} : ${c.n ?? "?"} -> ${n ?? `ignoré (${v1 ?? "?"}/${v2 ?? "?"})`}`);
         if (n == null) continue;
-        if (c.n != null && n > c.n) { fs.pending = at + 4000; fs.clickFrame = true; fs.diag.clicks++; olog(`clic repéré${line ? "" : " (pas d'infobulle sur cette image : attente)"}`);
+        if (c.n != null && n > c.n) { fs.pending = at + 4000; fs.clickFrame = true; fs.diag.clicks++; olog(`clic repéré${line ? "" : prevTip && at - prevTip.at < 1500 ? " (infobulle masquée : lecture de l'image d'avant le clic)" : " (pas d'infobulle : attente)"}`);
           // Plusieurs sélections entre deux images : une seule infobulle est visible, les autres caisses ne peuvent pas être lues.
           if (n - c.n >= 2) { olog(`${n - c.n} sélections d'un coup : ${n - c.n - 1} caisse(s) non lue(s)`);
             ocrMsg(`${n - c.n} caisses cliquées trop vite : une seule a pu être lue. Désélectionne puis resélectionne la ou les caisses manquantes (un clic par seconde environ).`, true); } }
@@ -1636,6 +1641,17 @@ async function frameTooltip(bmp, shot, fs, at) {
       if (at > fs.pending) { fs.pending = 0; olog("aucune infobulle nouvelle vue dans les 4 s après le clic"); return { added: false, missed: true }; }
       // Infobulle de l'image même du clic (la caisse survolée au moment du clic) ; sinon, la première nouvelle infobulle.
       const onClick = fs.clickFrame; fs.clickFrame = false;
+      // Infobulle masquée sur l'image du clic : on lit celle de la caisse survolée juste avant (moins de 1,5 s).
+      if (onClick && !line && prevTip && at - prevTip.at < 1500) {
+        fs.pending = 0; fs.lastLine = prevTip.line; fs.lastSig = lineSig(prevTip.bmp, prevTip.line);
+        const r0 = await readTooltipBitmap(prevTip.bmp, prevTip.line, false);
+        olog(r0 ? `infobulle lue (image d'avant le clic) : ${r0.line}` : "infobulle d'avant le clic illisible");
+        if (!r0) return { added: false };
+        const prevRead0 = ocr.last, it0 = pushOcrItem(r0, shot, at, 0); ocr.last.video = shot.id;
+        if (prevRead0 && OcrLogic.sameRead(prevRead0, ocr.last, 1e9)) it0.same = true;
+        st.items.sort((a, b) => shotPage(a.shot) - shotPage(b.shot)); renderReview();
+        return { added: true };
+      }
       const sameAsLast = line && fs.lastLine && Math.abs(line.x - fs.lastLine.x) + Math.abs(line.y - fs.lastLine.y) <= 12 && sigDiff(sigNow, fs.lastSig) <= 0.08;
       if (!line || (sameAsLast && !onClick)) return null;
       fs.pending = 0; fs.lastLine = line; fs.lastSig = sigNow;
