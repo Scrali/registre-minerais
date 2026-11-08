@@ -1624,7 +1624,10 @@ async function frameTooltip(bmp, shot, fs, at) {
         const n = v1 != null && v1 === v2 ? v1 : (v1 == null) !== (v2 == null) && (plausible(one) || c.n == null) ? one : null;
         olog(`compteur ${c.r.x},${c.r.y} : ${c.n ?? "?"} -> ${n ?? `ignoré (${v1 ?? "?"}/${v2 ?? "?"})`}`);
         if (n == null) continue;
-        if (c.n != null && n > c.n) { fs.pending = at + 4000; fs.clickFrame = true; fs.diag.clicks++; olog(`clic repéré${line ? "" : " (pas d'infobulle sur cette image : attente)"}`); }
+        if (c.n != null && n > c.n) { fs.pending = at + 4000; fs.clickFrame = true; fs.diag.clicks++; olog(`clic repéré${line ? "" : " (pas d'infobulle sur cette image : attente)"}`);
+          // Plusieurs sélections entre deux images : une seule infobulle est visible, les autres caisses ne peuvent pas être lues.
+          if (n - c.n >= 2) { olog(`${n - c.n} sélections d'un coup : ${n - c.n - 1} caisse(s) non lue(s)`);
+            ocrMsg(`${n - c.n} caisses cliquées trop vite : une seule a pu être lue. Désélectionne puis resélectionne la ou les caisses manquantes (un clic par seconde environ).`, true); } }
         c.n = n;
       }
       fs.diag.counters = fs.counters.map(c => c.n ?? "?").join(" / ");
