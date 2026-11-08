@@ -1499,11 +1499,57 @@ function glyphsCanvas(G) {
   og.putImageData(oi, 0, 0);
   return o;
 }
-async function readGemCount(bmp, line) {
+// Qualité écrite en bas à gauche d'une case (« 371 Q »), à partir de l'étiquette « X N » de la même case. null si illisible.
+async function readCellQuality(bmp, lab, thr = 165) {
+  const cellW = bmp.width * 0.095, cellH = bmp.height * 0.16;
+  const x = Math.max(0, Math.round(lab.x + lab.w - cellW * 0.92)), y = Math.round(lab.y + cellH * 0.64);
+  const w = Math.min(bmp.width - x, Math.round(cellW * 0.62)), h = Math.min(bmp.height - y, Math.round(cellH * 0.3));
+  if (w < 8 || h < 8) return null;
+  const scale = Math.max(1, Math.min(6, 90 / h)), c = document.createElement("canvas");
+  c.width = Math.round(w * scale) + 20; c.height = Math.round(h * scale) + 20;
+  const g = c.getContext("2d", { willReadFrequently: true }); g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height);
+  g.imageSmoothingEnabled = true; g.drawImage(bmp, x, y, w, h, 10, 10, c.width - 20, c.height - 20);
+  const im = g.getImageData(10, 10, c.width - 20, c.height - 20), d = im.data;
+  // Texte blanc crème sur fond sombre : devient noir sur blanc.
+  for (let i = 0; i < d.length; i += 4) { const mx = Math.max(d[i], d[i + 1], d[i + 2]), mn = Math.min(d[i], d[i + 1], d[i + 2]);
+    const on = 0.3 * d[i] + 0.59 * d[i + 1] + 0.11 * d[i + 2] > thr && (mx - mn) / (mx || 1) < 0.35; d[i] = d[i + 1] = d[i + 2] = on ? 0 : 255; }
+  // On ne garde que les caractères (composantes de la hauteur du texte) : le cadre de la case et le bas du minerai,
+  // qui gênaient la lecture, sont effacés.
+  const cw = c.width - 20, ch = c.height - 20, cl = new Int32Array(cw * ch), sk = new Int32Array(cw * ch), keep = [];
+  let id = 0;
+  for (let p0 = 0; p0 < cw * ch; p0++) {
+    if (d[p0 * 4] !== 0 || cl[p0]) continue;
+    id++; let sp = 0, x0 = cw, x1 = 0, y0 = ch, y1 = 0; sk[sp++] = p0; cl[p0] = id;
+    while (sp) { const p = sk[--sp], x = p % cw, y = (p - x) / cw;
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+      for (const q of [x > 0 ? p - 1 : -1, x < cw - 1 ? p + 1 : -1, y > 0 ? p - cw : -1, y < ch - 1 ? p + cw : -1]) if (q >= 0 && !cl[q] && d[q * 4] === 0) { cl[q] = id; sk[sp++] = q; } }
+    const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+    keep[id] = bh >= ch * 0.2 && bh <= ch * 0.6 && bw <= cw * 0.25 && bw <= bh * 1.3;
+  }
+  for (let p = 0; p < cw * ch; p++) if (cl[p] && !keep[cl[p]]) d[p * 4] = d[p * 4 + 1] = d[p * 4 + 2] = 255;
+  g.putImageData(im, 10, 10);
+  const wk = await ocrWorker();
+  await wk.setParameters({ tessedit_pageseg_mode: "7", tessedit_char_whitelist: "0123456789Q" });
+  const { data } = await wk.recognize(c);
+  const m = String(data.text || "").replace(/\s+/g, "").match(/\d{2,5}/);
+  return m ? m[0] : null;
+}
+// Qualité lue dans la case (« 1000Q » : le Q est souvent lu 0, le 0 barré de la police parfois 8) comparée à celle de l'infobulle.
+function sameCellQuality(read, quality) {
+  if (read == null || quality == null) return false;
+  const n = v => String(v).replace(/8/g, "0"), q = n(quality);
+  let r = n(read);
+  if (r.length === q.length + 1) r = r.slice(0, -1);   // « Q » lu comme un chiffre
+  if (r.length !== q.length) return false;
+  return r === q;   // aucun autre écart toléré : deux cases voisines ont souvent des qualités proches (274 / 294)
+}
+async function readGemCount(bmp, line, quality) {
   const W = bmp.width, H = bmp.height, cellW = W * 0.095, cellH = H * 0.16;
   const tipX = line.x - line.h * 0.8, tipY = line.y - line.h * 2.5;
+  // Zone large : près du bord droit de la liste, le jeu ouvre l'infobulle à GAUCHE de la souris. La souris peut donc
+  // être au coin gauche ou au coin droit de l'infobulle.
   const rx = Math.max(0, Math.round(tipX - cellW * 0.3)), ry = Math.max(0, Math.round(tipY - cellH * 1.3));
-  const rw = Math.min(W - rx, Math.round(cellW * 1.6)), rh = Math.min(H - ry, Math.round(cellH * 1.45));
+  const rw = Math.min(W - rx, Math.round(line.w + line.h * 1.6 + cellW * 1.4)), rh = Math.min(H - ry, Math.round(cellH * 1.45));
   const c = document.createElement("canvas"); c.width = rw; c.height = rh;
   const g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(bmp, rx, ry, rw, rh, 0, 0, rw, rh);
   const d = g.getImageData(0, 0, rw, rh).data, light = new Uint8Array(rw * rh);
@@ -1562,8 +1608,20 @@ async function readGemCount(bmp, line) {
   const mine = cands.filter(b => b.y >= rowY - cellH * 0.35).sort((a, b) => (a.x + a.w) - (b.x + b.w));
   cands.length = 0; cands.push(...mine);
   const w = await ocrWorker();
-  // Première étiquette (dans l'ordre ci-dessus) qui contient bien « X » suivi de 1 à 3 caractères.
-  const votes = [], cb = cands.find(b => [35, 20, 50].some(off => gemGlyphs(bmp, b, off)));
+  // Étiquettes valides (« X » suivi de 1 à 3 caractères), dans l'ordre ci-dessus.
+  const valid = cands.filter(b => [35, 20, 50].some(off => gemGlyphs(bmp, b, off))).slice(0, 4);
+  // Case survolée confirmée par sa qualité (« 371 Q » en bas à gauche = qualité de l'infobulle). Si une qualité est lue
+  // mais qu'aucune ne correspond, on ne choisit pas au hasard : nombre à saisir.
+  let cb = valid[0], seen = [];
+  if (quality != null && valid.length) {
+    cb = null;
+    for (const b of valid) {
+      for (const thr of [165, 140, 190]) { const q = await readCellQuality(bmp, b, thr); seen.push(q); if (sameCellQuality(q, quality)) { cb = b; break; } }
+      if (cb) break;
+    }
+    if (!cb && seen.every(q => q == null)) cb = valid[0];
+  }
+  const votes = [];
   if (cb) {
     // Texte foncé sur étiquette claire. Les caractères sont séparés puis recopiés espacés, sans le « X » : Tesseract
     // lisait « 11 » (deux traits serrés) comme 1. Plusieurs seuils et modes ; on garde la lecture majoritaire.
@@ -1584,7 +1642,7 @@ async function readGemCount(bmp, line) {
   }
   // Plusieurs lectures : on garde le nombre lu en majorité. Sans majorité nette, rien n'est inventé (nombre à saisir).
   const n = v => votes.filter(x => x === v).length, best = votes.slice().sort((a, b) => n(b) - n(a))[0];
-  olog(`gemme : ${cands.length} étiquette(s) « X N » trouvée(s)${cands.length ? ` (1re : ${cands[0].x},${cands[0].y} ${cands[0].w}×${cands[0].h})` : ""} · lectures : ${votes.join(", ") || "aucune"} · zone ${rx},${ry} ${rw}×${rh}`);
+  olog(`gemme : qualités des cases lues ${seen.map(q => q ?? "?").join(", ") || "-"} (infobulle ${quality ?? "?"}) · ${cands.length} étiquette(s) « X N » trouvée(s)${cb ? ` (retenue : ${cb.x},${cb.y} ${cb.w}×${cb.h})` : " (aucune retenue)"} · lectures : ${votes.join(", ") || "aucune"} · zone ${rx},${ry} ${rw}×${rh}`);
   return best != null && n(best) * 2 > votes.length ? best : null;
 }
 async function readTooltip(file) {
@@ -1615,7 +1673,7 @@ async function readTooltipBitmap(bmp, line, fallback) {
   }
   if (found && line) {
     const nm = found.name.replace(/\s*\((?:M|Ore|Raw)\)\s*$/i, "").trim();
-    if (isGem(matchTarget(nm), nm)) { try { found.count = await readGemCount(bmp, line); } catch (_) { found.count = null; } }
+    if (isGem(matchTarget(nm), nm)) { try { found.count = await readGemCount(bmp, line, found.quality); } catch (_) { found.count = null; } }
   }
   return found ? { ...found, proof } : null;
 }
