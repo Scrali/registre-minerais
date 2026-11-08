@@ -1418,6 +1418,59 @@ function ocrCanvas(bmp, r, scale) {
   g.putImageData(im, 0, 0);
   return c;
 }
+// Gemmes : le nombre est le « X N » en haut à droite de la case survolée. L'infobulle s'ouvre au curseur, donc ce coin
+// est juste au-dessus et à droite du coin haut-gauche de l'infobulle. On garde le premier « X N » à droite du curseur.
+async function readGemCount(bmp, line) {
+  const W = bmp.width, H = bmp.height, cellW = W * 0.095, cellH = H * 0.16;
+  const tipX = line.x - line.h * 0.8, tipY = line.y - line.h * 2.5;
+  const rx = Math.max(0, Math.round(tipX - cellW * 0.15)), ry = Math.max(0, Math.round(tipY - cellH * 1.1));
+  const rw = Math.min(W - rx, Math.round(cellW * 1.2)), rh = Math.min(H - ry, Math.round(cellH * 1.2));
+  const c = document.createElement("canvas"); c.width = rw; c.height = rh;
+  const g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(bmp, rx, ry, rw, rh, 0, 0, rw, rh);
+  const d = g.getImageData(0, 0, rw, rh).data, light = new Uint8Array(rw * rh);
+  for (let p = 0; p < rw * rh; p++) { const i = p * 4, mx = Math.max(d[i], d[i + 1], d[i + 2]), mn = Math.min(d[i], d[i + 1], d[i + 2]);
+    if (0.3 * d[i] + 0.59 * d[i + 1] + 0.11 * d[i + 2] > 135 && (mx - mn) / (mx || 1) < 0.4) light[p] = 1; }
+  // Les cadres des cases (longs traits fins) touchent parfois l'étiquette : on les efface avant de chercher.
+  const longH = Math.round(cellW * 0.5), longV = Math.round(cellH * 0.3);
+  for (let y = 0; y < rh; y++) { let run = 0; for (let x = 0; x <= rw; x++) { if (x < rw && light[y * rw + x]) run++; else { if (run > longH) for (let k = x - run; k < x; k++) light[y * rw + k] = 0; run = 0; } } }
+  for (let x = 0; x < rw; x++) { let run = 0; for (let y = 0; y <= rh; y++) { if (y < rh && light[y * rw + x]) run++; else { if (run > longV) for (let k = y - run; k < y; k++) light[k * rw + x] = 0; run = 0; } } }
+  // Étiquettes candidates : rectangles clairs pleins, de la taille d'une étiquette « X N ».
+  const stack = new Int32Array(rw * rh), cands = [];
+  for (let p0 = 0; p0 < rw * rh; p0++) {
+    if (light[p0] !== 1) continue;
+    let sp = 0, n = 0, x0 = rw, x1 = 0, y0 = rh, y1 = 0; stack[sp++] = p0; light[p0] = 2;
+    while (sp) { const p = stack[--sp], x = p % rw, y = (p - x) / rw; n++;
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+      if (x > 0 && light[p - 1] === 1) { light[p - 1] = 2; stack[sp++] = p - 1; } if (x < rw - 1 && light[p + 1] === 1) { light[p + 1] = 2; stack[sp++] = p + 1; }
+      if (y > 0 && light[p - rw] === 1) { light[p - rw] = 2; stack[sp++] = p - rw; } if (y < rh - 1 && light[p + rw] === 1) { light[p + rw] = 2; stack[sp++] = p + rw; } }
+    const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+    if (bw < cellW * 0.08 || bw > cellW * 0.4 || bh < cellH * 0.04 || bh > cellH * 0.16 || bw < bh * 1.2 || n / (bw * bh) < 0.45) continue;
+    if (rx + x0 < tipX - cellW * 0.1) continue;
+    cands.push({ x: rx + x0, y: ry + y0, w: bw, h: bh });
+  }
+  cands.sort((a, b) => a.x - b.x);
+  const w = await ocrWorker();
+  for (const cb of cands.slice(0, 3)) {
+    // Texte foncé sur étiquette claire. Petite étiquette (1080p, 1440p) : plusieurs seuils et modes avant d'abandonner.
+    const scale = Math.max(3, Math.min(10, 64 / cb.h));
+    for (const off of [35, 20, 50]) for (const psm of ["7", "8"]) {
+      const cv = document.createElement("canvas");
+      cv.width = Math.round(cb.w * scale) + 30; cv.height = Math.round(cb.h * scale) + 30;
+      const cg = cv.getContext("2d", { willReadFrequently: true }); cg.fillStyle = "#fff"; cg.fillRect(0, 0, cv.width, cv.height);
+      cg.imageSmoothingEnabled = true; cg.drawImage(bmp, cb.x, cb.y, cb.w, cb.h, 15, 15, cv.width - 30, cv.height - 30);
+      const im = cg.getImageData(15, 15, cv.width - 30, cv.height - 30), dd = im.data; let sum = 0, cnt = 0;
+      for (let i = 0; i < dd.length; i += 4) { sum += 0.3 * dd[i] + 0.59 * dd[i + 1] + 0.11 * dd[i + 2]; cnt++; }
+      const thr = sum / cnt - off;
+      for (let i = 0; i < dd.length; i += 4) { const l = 0.3 * dd[i] + 0.59 * dd[i + 1] + 0.11 * dd[i + 2]; dd[i] = dd[i + 1] = dd[i + 2] = l < thr ? 0 : 255; }
+      cg.putImageData(im, 15, 15);
+      await w.setParameters({ tessedit_pageseg_mode: psm, tessedit_char_whitelist: "Xx0123456789 " });
+      const { data } = await w.recognize(cv);
+      const m = String(data.text || "").replace(/\s+/g, "").match(/^[xX]?(\d{1,3})$/);
+      if (m && +m[1] > 0) return +m[1];
+    }
+  }
+  return null;
+}
 async function readTooltip(file) {
   const bmp = await createImageBitmap(file);
   try { return await readTooltipBitmap(bmp, findTooltipLine(bmp), true); } finally { bmp.close && bmp.close(); }
@@ -1444,6 +1497,10 @@ async function readTooltipBitmap(bmp, line, fallback) {
     found = OcrLogic.parseTooltip(data.text);
     if (found) found.confidence = Math.min(0.6, (data.confidence || 0) / 100);
   }
+  if (found && line) {
+    const nm = found.name.replace(/\s*\((?:M|Ore|Raw)\)\s*$/i, "").trim();
+    if (isGem(matchTarget(nm), nm)) { try { found.count = await readGemCount(bmp, line); } catch (_) { found.count = null; } }
+  }
   return found ? { ...found, proof } : null;
 }
 const ocrShots = () => st.shots.filter(s => s.ocr);
@@ -1451,7 +1508,7 @@ const ocrShots = () => st.shots.filter(s => s.ocr);
 function showLastRead(it) {
   const el = $("#ocrLast"), n = st.items.filter(x => x.ocr).length + 1, r = resOf(it.target);
   el.hidden = false;
-  el.innerHTML = `<span class="muted">Caisse n° ${n} lue :</span> <strong>${esc(r ? r.name : it.name)}</strong> Q${esc(it.quality)} · ${it.gem ? "nombre à saisir" : esc(fmt(it.qty) + " " + it.unit)}`;
+  el.innerHTML = `<span class="muted">Caisse n° ${n} lue :</span> <strong>${esc(r ? r.name : it.name)}</strong> Q${esc(it.quality)} · ${it.gem ? (it.needQty ? "nombre à saisir" : esc(fmt(it.qty)) + " unité" + (it.qty > 1 ? "s" : "")) : esc(fmt(it.qty) + " " + it.unit)}`;
   el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash");
 }
 // Gemmes et objets (Hadanite, Dolivine…) : comptés en unités, jamais en SCU.
@@ -1469,7 +1526,8 @@ function pushOcrItem(r, s, at, windowMs) {
   const prev = st.items.find(x => x.group === it.group);
   if (prev) { it.name = prev.name; it.target = prev.target; }
   // Gemme : l'infobulle donne un volume, pas un nombre. Le nombre (x1, x5…) affiché sur la case est à saisir.
-  if (isGem(it.target, name)) { it.unit = ""; it.qty = ""; it.needQty = true; it.gem = true; }
+  // Gemme : nombre lu sur la case (« X 8 ») ; s'il n'a pas pu être lu, il est à saisir.
+  if (isGem(it.target, name)) { it.unit = ""; it.gem = true; if (r.count > 0) { it.qty = r.count; it.needQty = false; } else { it.qty = ""; it.needQty = true; } }
   showLastRead(it);
   const read = { name, quality: r.quality, qty: r.qty, at };
   if (OcrLogic.sameRead(ocr.last, read, windowMs)) { it.on = false; it.dup = true; }
