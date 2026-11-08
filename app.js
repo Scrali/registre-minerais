@@ -1531,11 +1531,82 @@ function selectionEdges(bmp) {
   }
   return keys;
 }
+// Compteurs « SÉLECTIONNÉ : N » des panneaux du jeu : ils augmentent exactement de 1 à chaque clic sur une caisse,
+// ne sont jamais cachés par l'infobulle et ne bougent pas au défilement. Repérés une fois par OCR sur le haut de l'image.
+async function findSelCounters(bmp) {
+  const w = await ocrWorker(), top = Math.round(bmp.height * 0.4), scale = 2;
+  const c = document.createElement("canvas"); c.width = bmp.width * scale; c.height = top * scale;
+  const g = c.getContext("2d"); g.drawImage(bmp, 0, 0, bmp.width, top, 0, 0, c.width, c.height);
+  await w.setParameters({ tessedit_pageseg_mode: "11", tessedit_char_whitelist: "" });
+  const { data } = await w.recognize(c);
+  const out = [];
+  for (const wd of data.words || []) {
+    if (!/S.?L.?CT.?ONN/i.test(wd.text || "") || /NER|TOUT/i.test(wd.text || "")) continue;   // pas les boutons « Tout sélectionner »
+    const b = wd.bbox, h = (b.y1 - b.y0) / scale;
+    out.push({ x: Math.max(0, Math.round(b.x0 / scale - h * 0.3)), y: Math.max(0, Math.round(b.y0 / scale - h * 0.3)),
+               w: Math.round((b.x1 - b.x0) / scale + h * 5), h: Math.round(h * 1.6) });
+  }
+  return out;
+}
+function counterCanvas(bmp, r, forSig) {
+  const scale = forSig ? 0 : Math.max(2, Math.min(6, 48 / r.h));
+  const c = document.createElement("canvas"); c.width = forSig ? 48 : Math.round(r.w * scale); c.height = forSig ? 8 : Math.round(r.h * scale);
+  const g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(bmp, r.x, r.y, r.w, r.h, 0, 0, c.width, c.height);
+  const im = g.getImageData(0, 0, c.width, c.height), d = im.data; let sum = 0, max = 0;
+  for (let i = 0; i < d.length; i += 4) { const l = 0.3 * d[i] + 0.59 * d[i + 1] + 0.11 * d[i + 2]; sum += l; if (l > max) max = l; }
+  const thr = sum / (d.length / 4) + 0.45 * (max - sum / (d.length / 4));   // texte (clair, souvent orangé) sur fond sombre
+  let sig = "";
+  for (let i = 0; i < d.length; i += 4) { const on = 0.3 * d[i] + 0.59 * d[i + 1] + 0.11 * d[i + 2] > thr; d[i] = d[i + 1] = d[i + 2] = on ? 0 : 255; sig += on ? "1" : "0"; }
+  g.putImageData(im, 0, 0);
+  return forSig ? sig : c;
+}
+async function readSelCounter(bmp, r) {
+  const w = await ocrWorker();
+  await w.setParameters({ tessedit_pageseg_mode: "7", tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÉéÈè:0123456789 " });
+  const { data } = await w.recognize(counterCanvas(bmp, r, false));
+  const m = String(data.text || "").replace(/[Oo](?=\d|\s*$)/g, "0").match(/(\d{1,3})\s*$/);
+  return m ? +m[1] : null;
+}
 async function frameTooltip(bmp, shot, fs, at) {
   const line = findTooltipLine(bmp);
   // Mode « au clic » : on lit seulement quand une caisse vient d'être sélectionnée (nouveau cadre clair).
   // Le jeu masque l'infobulle au moment du clic : après une nouvelle sélection, on attend qu'elle s'affiche (4 s au plus).
   if (ocrTrigger() === "click") {
+    // 1) Compteurs « SÉLECTIONNÉ : N » (signal principal) : repérés au départ, puis relus seulement quand ils changent.
+    if (!fs.counters && !fs.counterBusy && (!fs.counterTry || at - fs.counterTry > 3000)) {
+      fs.counterBusy = true; fs.counterTry = at;
+      if (live.shot === shot) ocrMsg("Repérage du compteur « Sélectionné » du jeu… (2 secondes, attends avant de cliquer)");
+      try { const regs = await findSelCounters(bmp); if (regs.length) fs.counters = regs.map(r => ({ r, sig: "", n: null })); }
+      finally { fs.counterBusy = false; }
+      if (live.shot === shot) ocrMsg(fs.counters ? "Prêt : clique sur chaque caisse dans le jeu, elle est lue à chaque clic (le compteur « Sélectionné » augmente)."
+        : "Compteur « Sélectionné » non trouvé : lecture par les cadres de sélection. Clique sur chaque caisse.", !fs.counters);
+    }
+    if (fs.counters) {
+      fs.diag = fs.diag || { frames: 0, maxEdges: 0, clicks: 0, tips: 0 };
+      fs.diag.frames++; if (line) fs.diag.tips++; fs.diag.counters = fs.counters.map(c => c.n).join(" / ");
+      for (const c of fs.counters) {
+        const sig = counterCanvas(bmp, c.r, true);
+        if (sig === c.sig) continue;
+        c.sig = sig;
+        const n = await readSelCounter(bmp, c.r);
+        if (n == null) continue;
+        if (c.n != null && n > c.n) { fs.pending = at + 4000; fs.diag.clicks++; }
+        c.n = n;
+      }
+      fs.diag.counters = fs.counters.map(c => c.n ?? "?").join(" / ");
+      const sigNow = line ? lineSig(bmp, line) : "";
+      if (!fs.pending) { fs.prevLine = line; fs.prevSig = sigNow; return null; }
+      if (at > fs.pending) { fs.pending = 0; return { added: false, missed: true }; }
+      if (!line || (fs.lastLine && Math.abs(line.x - fs.lastLine.x) + Math.abs(line.y - fs.lastLine.y) <= 12 && sigDiff(sigNow, fs.lastSig) <= 0.08)) return null;
+      fs.pending = 0; fs.lastLine = line; fs.lastSig = sigNow;
+      const r = await readTooltipBitmap(bmp, line, false);
+      if (!r) return { added: false };
+      const prevRead = ocr.last, it = pushOcrItem(r, shot, at, 0); ocr.last.video = shot.id;
+      if (prevRead && OcrLogic.sameRead(prevRead, ocr.last, 1e9)) it.same = true;
+      st.items.sort((a, b) => shotPage(a.shot) - shotPage(b.shot)); renderReview();
+      return { added: true };
+    }
+    // 2) Repli : cadres de sélection autour des caisses.
     const edgeMap = selectionEdges(bmp), edges = edgeMap.size;
     fs.diag = fs.diag || { frames: 0, maxEdges: 0, clicks: 0, tips: 0 };
     fs.diag.frames++; fs.diag.edges = edges; fs.diag.maxEdges = Math.max(fs.diag.maxEdges, edges); if (line) fs.diag.tips++;
@@ -1631,7 +1702,7 @@ async function liveTick() {
     bmp.close && bmp.close();
     const dg = live.fs.diag;
     if (dg && ocrTrigger() === "click" && live.frames % 10 === 0)
-      $("#ocrDiagLine").textContent = `Images reçues : ${dg.frames} (${live.lastBmp.width}×${live.lastBmp.height}) · bords de carrés visibles : ${dg.edges} · clics repérés : ${dg.clicks} · infobulles vues : ${dg.tips} · caisses lues : ${live.n}`;
+      $("#ocrDiagLine").textContent = `Images reçues : ${dg.frames} (${live.lastBmp.width}×${live.lastBmp.height}) · ${live.fs.counters ? `compteurs « Sélectionné » lus : ${dg.counters}` : `compteur « Sélectionné » non trouvé, cadres visibles : ${dg.edges ?? "?"}`} · clics repérés : ${dg.clicks} · infobulles vues : ${dg.tips} · caisses lues : ${live.n}`;
     if (!live.n && live.frames === 40) ocrMsg(`Aucune infobulle détectée pour l'instant (image reçue : ${live.lastBmp.width}×${live.lastBmp.height}${live.seen ? `, ${live.seen} étiquette(s) repérée(s) mais illisible(s)` : ", étiquette violette du nom jamais repérée"}). Survole une caisse jusqu'à voir son infobulle, puis clique sur « Envoyer l'image vue » et transmets-moi le fichier.`, true);
     if (got && got.missed) ocrMsg(`Caisse sélectionnée mais aucune infobulle vue : après le clic, laisse la souris sur la caisse jusqu'à ce que son infobulle apparaisse. (${live.n} caisse${live.n > 1 ? "s" : ""} lue${live.n > 1 ? "s" : ""})`, true);
     if (got && got.added) { live.n++; live.shot.n = live.n; ocrMsg(`Lecture en direct : ${live.n} caisse${live.n > 1 ? "s" : ""} lue${live.n > 1 ? "s" : ""}. Continue, ou clique sur « Arrêter ».`); }
