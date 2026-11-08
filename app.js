@@ -1680,7 +1680,7 @@ async function readGemCount(bmp, line, quality) {
       for (let y = b.y; y < b.y + b.h; y++) for (let x = b.x; x < b.x + b.w; x++) { const p = y * rw + x; if (!light0[p]) continue;
         sr += d[p * 4]; sg += d[p * 4 + 1]; sl += 0.3 * d[p * 4] + 0.59 * d[p * 4 + 1] + 0.11 * d[p * 4 + 2]; nn++; }
       if (!nn) continue;
-      const mint = (sg - sr) / nn >= 6, grey = sl / nn < 190 && b.n / (b.w * b.h) >= 0.5;
+      const fill = b.n / (b.w * b.h), mint = (sg - sr) / nn >= 6 && fill >= 0.6, grey = sl / nn < 190 && fill >= 0.6;   // étiquette pleine (un texte clair ne l'est pas)
       if (!mint && !grey) continue;
       cands.push({ x: rx + b.x, y: ry + b.y, w: b.w, h: b.h });
     }
@@ -1709,16 +1709,18 @@ async function readGemCount(bmp, line, quality) {
       for (const thr of [165, 140, 190]) { const q = await readCellQuality(bmp, b, thr); seen.push(q); if (q != null) any = true; if (sameCellQuality(q, quality)) { hits.push(b); hit = true; break; } }
       if (!hit && !any) unread.push(b);
     }
-    const tipR0 = line.x + line.w + line.h * 0.8, inCell0 = (b, x) => x >= b.x + b.w - cellW * 0.97 && x <= b.x + b.w + cellW * 0.05;
+    const tipR0 = line.x + line.w + line.h * 0.8, inCell0 = (b, x) => x >= b.x + b.w - cellW * 1.2 && x <= b.x + b.w + cellW * 0.05;   // près du bord droit, le jeu décale l'infobulle vers la gauche
     // Par élimination : aucune qualité ne correspond, toutes les autres cases sont lues (et différentes), une seule case
     // reste illisible et elle contient la souris : c'est elle.
-    if (!hits.length && unread.length === 1 && valid.length > 1 && (inCell0(unread[0], tipX) || inCell0(unread[0], tipR0))) {
-      hits.push(unread[0]); olog("gemme : case retenue par élimination (sa qualité est illisible, les autres ne correspondent pas)");
+    // (la qualité de la case survolée est souvent cachée par l'infobulle elle-même)
+    const unreadIn = unread.filter(b => inCell0(b, tipX) || inCell0(b, tipR0));
+    if (!hits.length && unreadIn.length === 1 && valid.length > 1) {
+      hits.push(unreadIn[0]); olog("gemme : case retenue par élimination (sa qualité est illisible, les autres ne correspondent pas)");
     }
     // Plusieurs cases de même qualité : on garde celles qui contiennent la souris, que l'infobulle soit ouverte à
     // droite de la souris (coin gauche de l'infobulle dans la case) ou à gauche (coin droit dans la case).
     if (hits.length > 1) {
-      const tipR = line.x + line.w + line.h * 0.8, inCell = (b, x) => x >= b.x + b.w - cellW * 0.97 && x <= b.x + b.w + cellW * 0.05;
+      const tipR = line.x + line.w + line.h * 0.8, inCell = (b, x) => x >= b.x + b.w - cellW * 1.2 && x <= b.x + b.w + cellW * 0.05;
       const ok = hits.filter(b => inCell(b, tipX) || inCell(b, tipR));
       if (ok.length) hits.splice(0, hits.length, ...ok);
     }
@@ -1750,7 +1752,7 @@ async function readGemCount(bmp, line, quality) {
   }
   // Plusieurs lectures : on garde le nombre lu en majorité. Sans majorité nette, rien n'est inventé (nombre à saisir).
   const n = v => votes.filter(x => x === v).length, best = votes.slice().sort((a, b) => n(b) - n(a))[0];
-  olog(`gemme : qualités des cases lues ${seen.map(q => q ?? "?").join(", ") || "-"} (infobulle ${quality ?? "?"}) · ${cands.length} étiquette(s) « X N » trouvée(s)${cb ? ` (retenue : ${cb.x},${cb.y} ${cb.w}×${cb.h})` : " (aucune retenue)"} · lectures : ${votes.join(", ") || "aucune"} · zone ${rx},${ry} ${rw}×${rh}`);
+  olog(`gemme : qualités des cases lues ${seen.map(q => q ?? "?").join(", ") || "-"} · étiquettes ${valid.map(b => `${b.x},${b.y}`).join(" ") || "-"} (infobulle ${quality ?? "?"}) · ${cands.length} étiquette(s) « X N » trouvée(s)${cb ? ` (retenue : ${cb.x},${cb.y} ${cb.w}×${cb.h})` : " (aucune retenue)"} · lectures : ${votes.join(", ") || "aucune"} · zone ${rx},${ry} ${rw}×${rh}`);
   return best != null && n(best) * 2 > votes.length ? best : null;
 }
 async function readTooltip(file) {
@@ -1977,7 +1979,14 @@ async function frameTooltip(bmp, shot, fs, at) {
         olog(`compteur ${c.r.x},${c.r.y} : ${c.n ?? "?"} -> ${n ?? `ignoré (${v1 ?? "?"}/${v2 ?? "?"})`}`);
         if (n == null) continue;
         // Saut de plus de 3 (ex. 26 -> 0 -> 26 sur une image floue) : lecture fausse du compteur, pas des clics.
-        if (c.n != null && (n > c.n + 3 || n < c.n)) { olog(`compteur ${c.r.x},${c.r.y} : ${c.n} -> ${n} (saut, pas compté comme clic)`); c.n = n; continue; }
+        // Baisse ou saut de plus de 3 : souvent une lecture fausse (« 9 » lu 3 ou 8). La valeur n'est reprise, sans compter
+        // de clic, qu'après 3 lectures identiques de suite.
+        if (c.n != null && (n > c.n + 3 || n < c.n)) {
+          c.pend = c.pend && c.pend.v === n ? { v: n, k: c.pend.k + 1 } : { v: n, k: 1 };
+          if (c.pend.k >= 3) { olog(`compteur ${c.r.x},${c.r.y} : ${c.n} -> ${n} (confirmé, pas compté comme clic)`); c.n = n; c.pend = null; }
+          continue;
+        }
+        c.pend = null;
         if (c.n != null && n > c.n) { fs.pending = at + 4000; fs.clickFrame = true; fs.diag.clicks++; olog(`clic repéré${line ? "" : prevTip && at - prevTip.at < 1500 ? " (infobulle masquée : lecture de l'image d'avant le clic)" : " (pas d'infobulle : attente)"}`);
           // Plusieurs sélections entre deux images : une seule infobulle est visible, les autres caisses ne peuvent pas être lues.
           if (n - c.n >= 2) { olog(`${n - c.n} sélections d'un coup : ${n - c.n - 1} caisse(s) non lue(s)`);
