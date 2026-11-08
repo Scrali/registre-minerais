@@ -1279,6 +1279,7 @@ function renderReview() {
         : it.proof ? `<div class="rv-pics"><figure><img class="proof" src="${it.proof}" alt="Infobulle lue"><figcaption>Infobulle lue</figcaption></figure></div>`
         : swatch(it.hex, it.color);
       const warn = [];
+      if (it.same) warn.push('<span class="tag warn" title="Mêmes minerai, qualité et contenu que la caisse lue juste avant : vérifie que tu n\'as pas cliqué deux fois la même caisse">Identique à la précédente</span>');
       if (it.dup) warn.push('<span class="tag warn" title="La même suite de cases termine la page précédente : cette case est sans doute déjà comptée">Déjà vue page précédente ?</span>');
       if (it.confidence != null && it.confidence < 0.7) warn.push('<span class="tag warn" title="L\'IA n\'est pas sûre de cette lecture">Lecture incertaine</span>');
       if (it.by === "couleur") warn.push('<span class="tag" title="Le nom n\'était pas lisible : reconnu par l\'apparence du caillou">Reconnu par l\'apparence</span>');
@@ -1464,8 +1465,55 @@ async function ocrVideo(file) {
 // Une infobulle n'est lue que lorsqu'elle est restée immobile et identique pendant STABLE_MS (la souris s'est posée
 // sur la caisse) : les caisses survolées en passant sont ignorées. Elle n'est relue que si elle change ou disparaît.
 const STABLE_MS = 700;
+const ocrTrigger = () => (document.querySelector("input[name=ocrTrig]:checked") || {}).value || "click";
+// Cadres de sélection du jeu (trait fin et clair autour d'une case cliquée, légèrement incliné : écran en 3D).
+// Renvoie le nombre de bords verticaux distincts : il augmente quand une caisse vient d'être sélectionnée.
+function selectionEdges(bmp) {
+  const W = bmp.width, H = bmp.height, c = document.createElement("canvas"); c.width = W; c.height = H;
+  const g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(bmp, 0, 0);
+  const d = g.getImageData(0, 0, W, H).data, L = new Uint8Array(W * H), S = new Uint8Array(W * H);
+  for (let i = 0, p = 0; p < W * H; i += 4, p++) {
+    const r = d[i], gg = d[i + 1], b = d[i + 2], mx = Math.max(r, gg, b), mn = Math.min(r, gg, b);
+    L[p] = 0.3 * r + 0.59 * gg + 0.11 * b; S[p] = mx ? Math.round(100 * (mx - mn) / mx) : 0;
+  }
+  const k = 4, line = new Uint8Array(W * H);
+  for (let y = 0; y < H; y++) for (let x = k; x < W - k; x++) {
+    const p = y * W + x, l = L[p];
+    if (l > 130 && S[p] < 35 && l - L[p - k] > 40 && l - L[p + k] > 40) line[p] = 1;
+  }
+  const used = new Uint8Array(W * H), minLen = Math.round(H * 0.09), keys = new Set();
+  for (let y = 0; y < H - 1; y++) for (let x = 0; x < W; x++) {
+    const p = y * W + x; if (!line[p] || used[p]) continue;
+    let cy = y, cx = x, gap = 0, sx = 0, n = 0;
+    while (cy < H - 1) {
+      used[cy * W + cx] = 1; sx += cx; n++;
+      let nx = -1;
+      for (const dx of [0, -1, 1, -2, 2]) { const xx = cx + dx; if (xx >= 0 && xx < W && line[(cy + 1) * W + xx]) { nx = xx; break; } }
+      cy++;
+      if (nx < 0) { if (++gap > 4) break; continue; }
+      gap = 0; cx = nx;
+    }
+    if (cy - y >= minLen) keys.add(Math.round(sx / n / 12) + ":" + Math.round(y / 30));
+  }
+  return keys.size;
+}
 async function frameTooltip(bmp, shot, fs, at) {
   const line = findTooltipLine(bmp);
+  // Mode « au clic » : on lit seulement quand une caisse vient d'être sélectionnée (nouveau cadre clair).
+  if (ocrTrigger() === "click") {
+    const edges = selectionEdges(bmp);
+    if (fs.edges == null || edges < fs.edges) fs.edges = edges;
+    if (!line || edges < fs.edges + 2) return null;
+    fs.edges = edges;
+    const r = await readTooltipBitmap(bmp, line, false);
+    if (!r) return { added: false };
+    const prevRead = ocr.last;
+    const it = pushOcrItem(r, shot, at, 0); ocr.last.video = shot.id;
+    // Même valeurs que la caisse précédente : signalé (reste coché, le clic est volontaire).
+    if (prevRead && OcrLogic.sameRead(prevRead, ocr.last, 1e9)) it.same = true;
+    st.items.sort((a, b) => shotPage(a.shot) - shotPage(b.shot)); renderReview();
+    return { added: true };
+  }
   const sig = line ? lineSig(bmp, line) : "";
   const same = line && fs.prevLine && Math.abs(line.x - fs.prevLine.x) + Math.abs(line.y - fs.prevLine.y) <= 12 && sigDiff(sig, fs.prevSig) <= 0.08;
   if (!same) { fs.since = at; fs.done = false; }
@@ -1495,7 +1543,7 @@ async function startLive() {
   live.stream.getVideoTracks()[0].addEventListener("ended", stopLive);
   ocrMsg("Lecture en direct : survole chaque caisse jusqu'à l'apparition de son infobulle. Préparation…");
   await ocrWorker().catch(err => ocrMsg(errText(err), true));
-  ocrMsg("Lecture en direct active : pose la souris sur chaque caisse environ une seconde (le passage d'une caisse à l'autre est ignoré), puis clique sur « Arrêter ».");
+  ocrMsg(ocrTrigger() === "click" ? "Lecture en direct active : clique sur chaque caisse dans le jeu (elle est lue quand elle est sélectionnée), puis clique sur « Arrêter »." : "Lecture en direct active : pose la souris sur chaque caisse environ une seconde (le passage d'une caisse à l'autre est ignoré), puis clique sur « Arrêter ».");
   live.timer = setInterval(liveTick, 300);
 }
 // Image quasi uniformément noire (moyenne et écart très faibles), mesurée sur une version réduite.
