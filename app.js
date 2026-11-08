@@ -192,6 +192,7 @@ async function enter(session) {
   applyRights();
   show("appView");
   await Promise.all([loadOrgs(), loadProfiles(), loadResources(), loadMoves(), loadStocks(), loadRefImages(), loadRequests()]);
+  loadLearning();
   loadMyMoves();
 }
 
@@ -854,7 +855,7 @@ function openDialog(r) {
   $("#fColor").value = (r && okHex(r.color)) || "#888888";
   $("#fColor").dataset.touched = r && okHex(r.color) ? "1" : "";
   $("#fColorName").value = r ? r.color_name || "" : "";
-  const del = $("#fDelete"); del.hidden = !r; del.classList.remove("armed"); del.textContent = "Supprimer";
+  const del = $("#fDelete"); del.hidden = !r || !!r.locked; del.classList.remove("armed"); del.textContent = "Supprimer";
   dlg.showModal(); $("#fName").focus();
 }
 $("#addRes").addEventListener("click", () => openDialog(null));
@@ -1227,9 +1228,16 @@ $("#analyze").addEventListener("click", async () => {
   renderShots();
 });
 
+// Nom déjà lu et enregistré (apprentissage) : ressource la plus souvent retenue pour ce texte.
+function learnedTarget(name) {
+  const n = norm(name); if (!n) return null;
+  const rows = (st.learn || []).filter(l => l.kind === "name" && l.seen === n && l.resource_id && st.resources.some(r => r.id === l.resource_id));
+  return rows.length ? rows.sort((a, b) => b.hits - a.hits)[0].resource_id : null;
+}
 function matchTarget(name) {
   const n = norm(name); if (!n) return "new";
   let r = st.resources.find(x => norm(x.name) === n) || st.resources.find(x => x.name_en && norm(x.name_en) === n);
+  if (!r) { const l = learnedTarget(name); if (l) return l; }
   // Correspondance partielle : jamais entre un minerai brut « X (Ore) » et la ressource raffinée « X ».
   const ore = t => /[([]\s*(ore|raw|brut)\s*[)\]]|\bbrut\b/i.test(t);
   if (!r) r = st.resources.find(x => { const k = norm(x.name); return ore(x.name) === ore(name) && k.length > 3 && (k.includes(n) || n.includes(k)); });
@@ -1305,6 +1313,7 @@ function renderReview() {
       if (it.same) warn.push('<span class="tag warn" title="Mêmes minerai, qualité et contenu que la caisse lue juste avant : vérifie que tu n\'as pas cliqué deux fois la même caisse">Identique à la précédente</span>');
       if (it.dup) warn.push('<span class="tag warn" title="La même suite de cases termine la page précédente : cette case est sans doute déjà comptée">Déjà vue page précédente ?</span>');
       if (it.confidence != null && it.confidence < 0.7) warn.push('<span class="tag warn" title="L\'IA n\'est pas sûre de cette lecture">Lecture incertaine</span>');
+      if (it.learned) warn.push('<span class="tag" title="Ce nom lu a déjà été rattaché à cette ressource dans un relevé enregistré">Reconnu grâce à l\'historique</span>');
       if (it.by === "couleur") warn.push('<span class="tag" title="Le nom n\'était pas lisible : reconnu par l\'apparence du caillou">Reconnu par l\'apparence</span>');
       const extra = many ? `<span class="rv-acts"><button type="button" class="linkbtn" data-split="${i}" title="Ce caillou n'est pas le même minerai que les autres du groupe : le nommer à part">Séparer</button></span>`
         : `${it.color ? `<div class="colordesc">${esc(it.color)}</div>` : ""}${refBtns(i)}`;
@@ -1560,11 +1569,22 @@ const GEM_DIGITS = {
   "8": [0.825, "2bddea40ada99dc2d91117e5b60003d68a2117d35feccee17fca9cf5ab1001bba900009e8b4213ad4fcaabe907dcfd91"],
   "9": [0.832, "5deeee91dc988bf7e61003dbd50001cccb2115ec9fddcefd2abbacfd000002de110000be683223ce8ecbbcfc1bccdeb3"]
 };
+// Chiffre reconnu par sa forme : modèles d'origine + exemples appris (chiffres enregistrés dans les relevés).
+// Distance d'un chiffre = la plus petite entre son modèle et ses exemples ; il faut un écart net avec les autres.
 function classifyGlyph(k, cw) {
-  const s = glyphGrid(k, cw), r = [];
-  for (const [d, [a, enc]] of Object.entries(GEM_DIGITS)) { let t = 0; for (let i = 0; i < 96; i++) t += Math.abs(s.grid[i] - parseInt(enc[i], 16) / 15); r.push([d, t / 96 + Math.abs(s.aspect - a) * 0.5]); }
-  r.sort((a, b) => a[1] - b[1]);
-  return r[0][1] < 0.3 && r[1][1] - r[0][1] >= 0.03 ? r[0][0] : null;
+  const s = glyphGrid(k, cw), best = {}, fromLearn = {};
+  classifyGlyph.strong = false;
+  const dist = (grid, aspect) => { let t = 0; for (let i = 0; i < 96; i++) t += Math.abs(s.grid[i] - grid[i]); return t / 96 + Math.abs(s.aspect - aspect) * 0.5; };
+  for (const [d, [a, enc]] of Object.entries(GEM_DIGITS)) best[d] = dist(Array.from(enc, c => parseInt(c, 16) / 15), a);
+  for (const l of st.learn || []) {
+    if (l.kind !== "glyph" || !l.sample || !Array.isArray(l.sample.grid) || l.sample.grid.length !== 96) continue;
+    const v = dist(l.sample.grid, Number(l.sample.aspect) || 0);
+    if (!(l.value in best) || v < best[l.value]) { best[l.value] = v; fromLearn[l.value] = true; }
+  }
+  const r = Object.entries(best).sort((a, b) => a[1] - b[1]);
+  // Presque identique à un exemple appris de cet écran, et nettement différent des autres chiffres : lecture sûre.
+  classifyGlyph.strong = !!fromLearn[r[0][0]] && r[0][1] < 0.1 && (r.length < 2 || r[1][1] - r[0][1] >= 0.05);
+  return r[0][1] < 0.3 && (r.length < 2 || r[1][1] - r[0][1] >= 0.03) ? r[0][0] : null;
 }
 // Caractères recopiés espacés sur fond blanc (repli : lecture par Tesseract).
 function glyphsCanvas(G) {
@@ -1737,15 +1757,20 @@ async function readGemCount(bmp, line, quality, alt) {
     if (!cb && seen.every(q => q == null)) cb = valid[0];
   }
   const votes = [];
+  readGemCount.glyphs = null;
   if (cb) {
+    // Exemples de forme des chiffres retenus (pour apprendre au moment de l'enregistrement).
+    { const G = [35, 20, 50].map(off => gemGlyphs(bmp, cb, off)).find(Boolean); if (G) readGemCount.glyphs = G.digits.map(k => { const g = glyphGrid(k, G.cw); return { aspect: +g.aspect.toFixed(3), grid: g.grid.map(v => +v.toFixed(2)) }; }); }
     // Texte foncé sur étiquette claire. Les caractères sont séparés puis recopiés espacés, sans le « X » : Tesseract
     // lisait « 11 » (deux traits serrés) comme 1. Plusieurs seuils et modes ; on garde la lecture majoritaire.
     for (const off of [35, 20, 50]) {
       const G = gemGlyphs(bmp, cb, off);
       if (!G) continue;
       // Reconnaissance par la forme (police du jeu) : compte double. Tesseract en complément (et seul pour le 0).
-      const byShape = G.digits.map(k => classifyGlyph(k, G.cw));
-      if (byShape.every(Boolean) && +byShape.join("") > 0) votes.push(+byShape.join(""), +byShape.join(""));
+      let strong = true;
+      const byShape = G.digits.map(k => { const d = classifyGlyph(k, G.cw); strong = strong && classifyGlyph.strong; return d; });
+      // Forme reconnue d'après un exemple appris : elle l'emporte sur Tesseract (déjà corrigé par toi sur cet écran).
+      if (byShape.every(Boolean) && +byShape.join("") > 0) votes.push(...Array(strong ? 8 : 2).fill(+byShape.join("")));
       const cv = glyphsCanvas(G); cv.glyphs = G.digits.length;
       for (const psm of ["7", "8"]) {
         await w.setParameters({ tessedit_pageseg_mode: psm, tessedit_char_whitelist: "0123456789" });
@@ -1793,7 +1818,7 @@ async function readTooltipBitmap(bmp, line, fallback) {
     // Les deux lectures diffèrent : celle de la case est gardée, l'autre reste possible (vérifiée sur la grille pour une gemme).
     try { const q = await readQualityBox(bmp, line); if (q != null) { if (q !== found.quality) { olog(`qualité : ${q} dans sa case (ligne entière : ${found.quality})`); found.qualityAlt = found.quality; } found.quality = q; } } catch (_) {}
     const nm = found.name.replace(/\s*\((?:M|Ore|Raw)\)\s*$/i, "").trim();
-    if (isGem(matchTarget(nm), nm)) { try { found.count = await readGemCount(bmp, line, found.quality, found.qualityAlt); if (readGemCount.matched != null) found.quality = readGemCount.matched; } catch (_) { found.count = null; } }
+    if (isGem(matchTarget(nm), nm)) { try { found.count = await readGemCount(bmp, line, found.quality, found.qualityAlt); found.glyphs = readGemCount.glyphs; if (readGemCount.matched != null) found.quality = readGemCount.matched; } catch (_) { found.count = null; } }
   }
   return found ? { ...found, proof } : null;
 }
@@ -1822,9 +1847,13 @@ function gemSpelling(n) {
   return near.length === 1 ? near[0][0].toUpperCase() + near[0].slice(1) : n;
 }
 function pushOcrItem(r, s, at, windowMs) {
-  const name = gemSpelling(r.name.replace(/\s*\((?:M|Ore|Raw)\)\s*$/i, "").trim());
+  const raw = r.name.replace(/\s*\((?:M|Ore|Raw)\)\s*$/i, "").trim(), name = gemSpelling(raw);
   const it = { name, quality: String(r.quality), qty: r.qty, unit: "SCU", color: "", hex: "", by: "nom", on: true, target: matchTarget(name),
-    shot: s.id, crop: null, proof: r.proof, box: null, confidence: r.confidence ?? null, group: norm(name), ocr: true };
+    shot: s.id, crop: null, proof: r.proof, box: null, confidence: r.confidence ?? null, group: norm(name), ocr: true,
+    readName: norm(raw), readCount: r.count ?? null, glyphs: r.glyphs || null };
+  // Rattaché grâce à un relevé précédent (apprentissage) : signalé dans le tableau.
+  if (it.target !== "new" && !st.resources.some(x => norm(x.name) === norm(name) || (x.name_en && norm(x.name_en) === norm(name))) && learnedTarget(name) === it.target) it.learned = true;
+  it.autoTarget = it.target;
   const prev = st.items.find(x => x.group === it.group);
   if (prev) { it.name = prev.name; it.target = prev.target; }
   // Gemme : l'infobulle donne un volume, pas un nombre. Le nombre (x1, x5…) affiché sur la case est à saisir.
@@ -2382,6 +2411,43 @@ function renderDiff() {
 }
 $("#diffBody").addEventListener("change", e => { const s = e.target.closest("[data-reason]"); if (s) st.reasons[s.dataset.reason] = s.value; });
 $("#diffBack").addEventListener("click", () => { hideDiff(); $("#review").scrollIntoView({ block: "nearest" }); });
+// Apprentissage : chaque ligne d'infobulle enregistrée (cochée, rattachée à une ressource) apprend au site
+// le nom lu -> ressource, et la forme de chaque chiffre « X N » -> chiffre enregistré, qu'il ait lu juste ou non.
+async function teachOcr() {
+  const items = [];
+  for (const it of st.items) {
+    if (!it.ocr || !it.on || !it.target || it.target === "new" || !resOf(it.target)) continue;
+    if (it.readName) items.push({ kind: "name", seen: it.readName, resource_id: it.target, was_right: it.autoTarget === it.target });
+    const q = num(it.qty), digits = Number.isInteger(q) && q > 0 ? String(q) : "";
+    if (it.gem && it.glyphs && digits.length === it.glyphs.length)
+      it.glyphs.forEach((g, i) => items.push({ kind: "glyph", value: digits[i], sample: g, was_right: it.readCount === q }));
+  }
+  if (!items.length) return 0;
+  try { const n = await rpc("learn_ocr", { p_items: items }); loadLearning(); return n || 0; }
+  catch (err) { console.warn(err); return 0; }
+}
+async function loadLearning() {
+  const { data, error } = await sb.from("ocr_learning").select("id, kind, seen, value, resource_id, sample, was_right, hits, updated_at").order("updated_at", { ascending: false }).limit(2000);
+  if (error) return;   // table absente (base pas encore migrée) : la lecture fonctionne sans apprentissage
+  st.learn = data || [];
+  renderLearning();
+}
+function renderLearning() {
+  const box = $("#ocrLearn"); if (!box) return;
+  const names = (st.learn || []).filter(l => l.kind === "name"), glyphs = (st.learn || []).filter(l => l.kind === "glyph");
+  const per = {}; for (const g of glyphs) per[g.value] = (per[g.value] || 0) + 1;
+  $("#ocrLearnSum").textContent = `Ce que le site a appris : ${names.length} nom${names.length > 1 ? "s" : ""}, ${glyphs.length} chiffre${glyphs.length > 1 ? "s" : ""}`;
+  const corr = names.filter(l => !l.was_right || norm(l.value) !== l.seen);
+  $("#ocrLearnBody").innerHTML =
+    `<p class="muted">Appris uniquement des lignes enregistrées : corrections et lectures justes confirmées.</p>`
+    + `<p><b>Chiffres des étiquettes « X N »</b> : ${Object.keys(per).sort().map(d => `${d} (${per[d]})`).join(", ") || "aucun pour l'instant"}</p>`
+    + `<p><b>Noms lus rattachés à une ressource</b>${corr.length ? "" : " : aucun nom mal lu pour l'instant"}</p>`
+    + (corr.length ? `<ul class="learn-list">${corr.map(l => `<li>« ${esc(l.seen)} » → ${esc(l.value)} <span class="muted">(×${l.hits})</span>${isAdmin() ? ` <button class="linkbtn" data-forget="${l.id}">Oublier</button>` : ""}</li>`).join("")}</ul>` : "");
+}
+document.addEventListener("click", async e => {
+  const b = e.target.closest("[data-forget]"); if (!b) return;
+  try { await rpc("forget_ocr", { p_id: Number(b.dataset.forget) }); await loadLearning(); } catch (err) { setStatus(errText(err)); }
+});
 async function commitScan(allowStale, allowDup) {
   if (!st.diff) return;
   const place = $("#capPlace").value.trim();
@@ -2405,9 +2471,10 @@ async function commitScan(allowStale, allowDup) {
       }
     }
     if (learned) loadRefImages();
+    const taught = await teachOcr();
     const n = (res.changes || []).length;
     clearCapture(); $("#capNote").value = "";
-    capMsg(`Relevé enregistré pour ${place} : ${n} variation${n > 1 ? "s" : ""}${res.replayed ? " (cette opération était déjà enregistrée)" : ""}${learned ? ` · ${learned} vignette${learned > 1 ? "s ajoutées" : " ajoutée"} à la bibliothèque` : ""}.`);
+    capMsg(`Relevé enregistré pour ${place} : ${n} variation${n > 1 ? "s" : ""}${res.replayed ? " (cette opération était déjà enregistrée)" : ""}${learned ? ` · ${learned} vignette${learned > 1 ? "s ajoutées" : " ajoutée"} à la bibliothèque` : ""}${taught ? ` · lecture des infobulles : ${taught} élément${taught > 1 ? "s appris" : " appris"}` : ""}.`);
     await loadStocks(); loadMyMoves();
   } catch (err) {
     const m = errText(err);
@@ -2983,7 +3050,7 @@ function dbRow(r) {
     <td><input type="text" class="e-unit" id="e-unit-${esc(r.id)}" value="${esc(r.unit)}" aria-label="Unité" style="max-width:80px"></td>
     <td><input type="number" class="e-min" id="e-min-${esc(r.id)}" value="${r.threshold > 0 ? r.threshold : ""}" min="0" step="any" placeholder="aucun" aria-label="Seuil"></td>
     <td class="num">${esc(sumsText(unitSums(held)))}</td>
-    <td><div class="acts"><button type="button" class="primary" data-act="save" disabled>Enregistrer</button><button type="button" class="danger" data-act="del">Supprimer</button></div></td>
+    <td><div class="acts"><button type="button" class="primary" data-act="save" disabled>Enregistrer</button>${r.locked ? '<span class="tag" title="Ressource du catalogue du jeu : elle ne peut pas être supprimée">Protégée</span>' : '<button type="button" class="danger" data-act="del">Supprimer</button>'}</div></td>
   </tr>`;
 }
 function renderDb() {
@@ -2999,9 +3066,12 @@ function renderDb() {
 
   const opts = st.resources.slice().sort((a, b) => a.name.localeCompare(b.name))
     .map(r => `<option value="${esc(r.id)}">${esc(r.name)}</option>`).join("");
+  // Source d'une fusion (supprimée ensuite) : jamais une ressource protégée du catalogue.
+  const srcOpts = st.resources.filter(r => !r.locked).sort((a, b) => a.name.localeCompare(b.name))
+    .map(r => `<option value="${esc(r.id)}">${esc(r.name)}</option>`).join("");
   for (const id of ["#mSource", "#mTarget"]) {
     const sel = $(id), cur = sel.value;
-    sel.innerHTML = '<option value="">Choisir…</option>' + opts;
+    sel.innerHTML = '<option value="">Choisir…</option>' + (id === "#mSource" ? srcOpts : opts);
     if (st.resources.some(r => r.id === cur)) sel.value = cur;
   }
   const hr = $("#hRes"), hrCur = hr.value;

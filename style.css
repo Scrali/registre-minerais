@@ -315,3 +315,8 @@ input.needqty{border-color:var(--warn);background:color-mix(in srgb,var(--warn) 
 @media (prefers-reduced-motion:reduce){.ocrlast.flash{animation:none}}
 /* Version du site, à la suite du titre */
 .appver{font-family:var(--f-mono, ui-monospace, monospace);font-size:13px;font-weight:600;letter-spacing:.04em;color:var(--muted, #6b7280);vertical-align:middle;margin-left:6px;white-space:nowrap}
+/* Apprentissage de la lecture des infobulles */
+.ocrlearn{margin-top:8px;font-size:13px}
+.ocrlearn summary{cursor:pointer;color:var(--muted)}
+.learn-list{margin:4px 0 0 18px;padding:0}
+.linkbtn{background:none;border:0;padding:0;color:var(--accent, #1b6f80);text-decoration:underline;cursor:pointer;font:inherit}
