@@ -1332,7 +1332,8 @@ function findTooltipLine(bmp) {
     let hue = 0;
     if (mx !== mn) hue = mx === r ? 60 * (((gg - b) / (mx - mn)) % 6) : mx === gg ? 60 * ((b - r) / (mx - mn) + 2) : 60 * ((r - gg) / (mx - mn) + 4);
     if (hue < 0) hue += 360;
-    if (hue >= 280 && hue <= 330 && s > 0.45 && mx > 0.35) { rows[y]++; pts.push([x, y]); }
+    // Étiquette violette / magenta du nom (« Cuivre (M) »), tolérante aux variations d'éclairage et de compression.
+    if (hue >= 265 && hue <= 340 && s > 0.3 && mx > 0.25) { rows[y]++; pts.push([x, y]); }
   }
   let best = -1, bestN = 2;
   for (let y = 0; y < h; y++) if (rows[y] > bestN) { bestN = rows[y]; best = y; }
@@ -1439,10 +1440,12 @@ async function frameTooltip(bmp, shot, fs, at) {
 const live = { stream: null, video: null, timer: null, busy: false, shot: null, fs: null, n: 0 };
 async function startLive() {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) return ocrMsg("Ton navigateur ne permet pas le partage d'écran : utilise Chrome, Edge ou Firefox.", true);
-  try { live.stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 5 }, audio: false }); } catch (_) { return; }
+  // Pleine résolution demandée : le texte de l'infobulle est petit.
+  try { live.stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 5, width: { ideal: 3840 }, height: { ideal: 2160 } }, audio: false }); } catch (_) { return; }
   live.video = document.createElement("video"); live.video.muted = true; live.video.srcObject = live.stream;
   await live.video.play().catch(() => {});
   live.shot = { id: ++shotSeq, file: null, url: "", status: "busy", n: 0, err: "", observedAt: Date.now(), ocr: true, video: true, live: true };
+  live.frames = 0; live.seen = 0; $("#ocrDiag").hidden = false;
   st.shots.push(live.shot); live.fs = { prevLine: null, prevSig: "" }; live.n = 0;
   if (!st.modeTouched && capMode() === "update") setCapMode("add");
   hideDiff(); renderShots();
@@ -1475,8 +1478,13 @@ async function liveTick() {
     }
     if (live.black >= 6) ocrMsg("Lecture en direct active : le jeu est visible. Survole chaque caisse environ une seconde.");
     live.black = 0;
+    live.frames = (live.frames || 0) + 1;
+    if (live.lastBmp && live.lastBmp.close) live.lastBmp.close();
+    live.lastBmp = await createImageBitmap(bmp);   // gardée pour le diagnostic
     const got = await frameTooltip(bmp, live.shot, live.fs, Date.now());
+    if (live.fs.prevLine) live.seen = (live.seen || 0) + 1;
     bmp.close && bmp.close();
+    if (!live.n && live.frames === 40) ocrMsg(`Aucune infobulle détectée pour l'instant (image reçue : ${live.lastBmp.width}×${live.lastBmp.height}${live.seen ? `, ${live.seen} étiquette(s) repérée(s) mais illisible(s)` : ", étiquette violette du nom jamais repérée"}). Survole une caisse jusqu'à voir son infobulle, puis clique sur « Envoyer l'image vue » et transmets-moi le fichier.`, true);
     if (got && got.added) { live.n++; live.shot.n = live.n; ocrMsg(`Lecture en direct : ${live.n} caisse${live.n > 1 ? "s" : ""} lue${live.n > 1 ? "s" : ""}. Continue, ou clique sur « Arrêter ».`); }
     if (st.items.filter(i => i.shot === live.shot.id).length >= VIDEO_MAX_READS) stopLive();
   } catch (err) { ocrMsg(errText(err), true); }
@@ -1493,6 +1501,16 @@ function stopLive() {
   live.shot = null;
 }
 $("#ocrLive").addEventListener("click", startLive);
+// Diagnostic : télécharge l'image exacte reçue par le site, avec la zone repérée encadrée, pour régler la détection.
+$("#ocrDiag").addEventListener("click", () => {
+  const b = live.lastBmp; if (!b) return ocrMsg("Aucune image reçue pour l'instant.", true);
+  const c = document.createElement("canvas"); c.width = b.width; c.height = b.height;
+  const g = c.getContext("2d"); g.drawImage(b, 0, 0);
+  const r = findTooltipLine(b);
+  if (r) { g.strokeStyle = "#00ff00"; g.lineWidth = 3; g.strokeRect(r.x, r.y, r.w, r.h); }
+  c.toBlob(blob => { const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `image-vue-par-le-site-${Date.now()}.png`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); }, "image/png");
+  ocrMsg(`Image téléchargée (${b.width}×${b.height}${r ? ", zone repérée encadrée en vert" : ", aucune zone repérée"}). Envoie-la-moi en pièce jointe.`);
+});
 $("#ocrLiveStop").addEventListener("click", stopLive);
 // Empreinte grossière de la ligne de l'infobulle (pour repérer un changement de contenu sans relancer l'OCR).
 function lineSig(bmp, r) {
