@@ -1558,7 +1558,8 @@ async function pollCaptures() {
 function stopWatch() { clearInterval(ocr.timer); ocr.timer = null; ocr.dir = null; $("#ocrWatch").hidden = false; $("#ocrStop").hidden = true; }
 $("#ocrWatch").addEventListener("click", async () => {
   if (!window.showDirectoryPicker) return ocrMsg("Ton navigateur ne permet pas de surveiller un dossier : utilise Chrome ou Edge, ou colle tes captures puis clique sur « Lire les infobulles ».", true);
-  try { ocr.dir = await window.showDirectoryPicker({ id: "captures-sc", mode: "read" }); } catch (_) { return; }
+  // Ouvre sur « Images » (les captures Windows y sont, dans « Captures d'écran ») ; le navigateur retient ensuite le dernier choix.
+  try { ocr.dir = await window.showDirectoryPicker({ id: "captures-sc", mode: "read", startIn: "pictures" }); } catch (_) { return; }
   ocr.since = Date.now() - 2000; ocr.seen = new Set();
   for await (const [name] of ocr.dir.entries()) ocr.seen.add(name);   // les anciennes captures sont ignorées
   $("#ocrWatch").hidden = true; $("#ocrStop").hidden = false;
