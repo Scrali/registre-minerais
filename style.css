@@ -309,3 +309,7 @@ input.needqty{border-color:var(--warn);background:color-mix(in srgb,var(--warn) 
 .lot.low{opacity:.5}
 .ocrbox{border:1px dashed var(--line);border-radius:var(--r);padding:10px;display:flex;flex-direction:column;gap:6px;margin-top:6px}
 .rv-pics img.proof{width:180px;max-width:100%;height:auto;border-radius:4px;border:1px solid var(--line)}
+.ocrlast{font-size:16px;padding:8px 10px;border-radius:var(--r);background:var(--soft);border-left:4px solid var(--accent)}
+.ocrlast.flash{animation:ocrflash 1.2s ease-out}
+@keyframes ocrflash{0%{background:color-mix(in srgb,var(--accent) 35%,var(--soft))}100%{background:var(--soft)}}
+@media (prefers-reduced-motion:reduce){.ocrlast.flash{animation:none}}

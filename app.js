@@ -1081,6 +1081,7 @@ function clearCapture() {
   st.modeTouched = false; setCapMode($("#capTerminal").value === "raffinerie" ? "add" : "update");
   hideDiff();
   $("#review").hidden = true; $("#file").value = ""; capMsg("");
+  const last = $("#ocrLast"); if (last) last.hidden = true;
   renderShots();
 }
 // Lieu de la capture, mémorisé d'une visite à l'autre.
@@ -1246,7 +1247,10 @@ function renderReview() {
   $("#review").hidden = false;
   const opts = st.resources.slice().sort(byName);
   const groups = new Map();
-  st.items.forEach((it, i) => { if (!groups.has(it.group)) groups.set(it.group, []); groups.get(it.group).push(i); });
+  // Lecture des infobulles : la dernière caisse lue en haut de la liste (on voit tout de suite ce qui s'ajoute).
+  const order = st.items.map((_, i) => i);
+  if (st.items.some(it => it.ocr)) order.reverse();
+  for (const i of order) { const it = st.items[i]; if (!groups.has(it.group)) groups.set(it.group, []); groups.get(it.group).push(i); }
   for (const it of st.items) if (it.target !== "new" && !st.resources.some(x => x.id === it.target)) it.target = "new";
   // Boutons « vue de référence » / « image principale » pour la vignette d'une case.
   const refBtns = i => {
@@ -1409,6 +1413,13 @@ async function readTooltipBitmap(bmp, line, fallback) {
   return found ? { ...found, proof } : null;
 }
 const ocrShots = () => st.shots.filter(s => s.ocr);
+// Dernière caisse lue, affichée en grand près des boutons de lecture.
+function showLastRead(it) {
+  const el = $("#ocrLast"), n = st.items.filter(x => x.ocr).length + 1, r = resOf(it.target);
+  el.hidden = false;
+  el.innerHTML = `<span class="muted">Caisse n° ${n} lue :</span> <strong>${esc(r ? r.name : it.name)}</strong> Q${esc(it.quality)} · ${it.gem ? "nombre à saisir" : esc(fmt(it.qty) + " " + it.unit)}`;
+  el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash");
+}
 // Gemmes et objets (Hadanite, Dolivine…) : comptés en unités, jamais en SCU.
 const GEM_NAMES = ["aphorite", "beradom", "carinite", "dolivine", "feynmaline", "glacosite", "hadanite", "janalite", "sadaryx", "saldynium", "yormandieye", "oeildeyormandi"];
 function isGem(target, name) {
@@ -1425,6 +1436,7 @@ function pushOcrItem(r, s, at, windowMs) {
   if (prev) { it.name = prev.name; it.target = prev.target; }
   // Gemme : l'infobulle donne un volume, pas un nombre. Le nombre (x1, x5…) affiché sur la case est à saisir.
   if (isGem(it.target, name)) { it.unit = ""; it.qty = ""; it.needQty = true; it.gem = true; }
+  showLastRead(it);
   const read = { name, quality: r.quality, qty: r.qty, at };
   if (OcrLogic.sameRead(ocr.last, read, windowMs)) { it.on = false; it.dup = true; }
   ocr.last = read;
