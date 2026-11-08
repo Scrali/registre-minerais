@@ -1622,7 +1622,8 @@ function sameCellQuality(read, quality) {
   if (r.length !== q.length) return false;
   return r === q;   // aucun autre écart toléré : deux cases voisines ont souvent des qualités proches (274 / 294)
 }
-async function readGemCount(bmp, line, quality) {
+async function readGemCount(bmp, line, quality, alt) {
+  readGemCount.matched = null;
   const W = bmp.width, H = bmp.height, cellW = W * 0.095, cellH = H * 0.16;
   const tipX = line.x - line.h * 0.8, tipY = line.y - line.h * 2.5;
   // Zone large : près du bord droit de la liste, le jeu ouvre l'infobulle à GAUCHE de la souris. La souris peut donc
@@ -1680,7 +1681,7 @@ async function readGemCount(bmp, line, quality) {
       for (let y = b.y; y < b.y + b.h; y++) for (let x = b.x; x < b.x + b.w; x++) { const p = y * rw + x; if (!light0[p]) continue;
         sr += d[p * 4]; sg += d[p * 4 + 1]; sl += 0.3 * d[p * 4] + 0.59 * d[p * 4 + 1] + 0.11 * d[p * 4 + 2]; nn++; }
       if (!nn) continue;
-      const fill = b.n / (b.w * b.h), mint = (sg - sr) / nn >= 6 && fill >= 0.6, grey = sl / nn < 190 && fill >= 0.6;   // étiquette pleine (un texte clair ne l'est pas)
+      const fill = b.n / (b.w * b.h), mint = (sg - sr) / nn >= 6 && fill >= 0.35, grey = sl / nn < 190 && fill >= 0.6;   // étiquette pleine (un texte clair ne l'est pas)
       if (!mint && !grey) continue;
       cands.push({ x: rx + b.x, y: ry + b.y, w: b.w, h: b.h });
     }
@@ -1706,7 +1707,9 @@ async function readGemCount(bmp, line, quality) {
     const hits = [], unread = [];
     for (const b of valid) {
       let any = false, hit = false;
-      for (const thr of [165, 140, 190]) { const q = await readCellQuality(bmp, b, thr); seen.push(q); if (q != null) any = true; if (sameCellQuality(q, quality)) { hits.push(b); hit = true; break; } }
+      for (const thr of [165, 140, 190]) { const q = await readCellQuality(bmp, b, thr); seen.push(q); if (q != null) any = true;
+        const m = sameCellQuality(q, quality) ? quality : alt != null && sameCellQuality(q, alt) ? alt : null;
+        if (m != null) { hits.push(b); b.q = m; hit = true; break; } }
       if (!hit && !any) unread.push(b);
     }
     const tipR0 = line.x + line.w + line.h * 0.8, inCell0 = (b, x) => x >= b.x + b.w - cellW * 1.2 && x <= b.x + b.w + cellW * 0.05;   // près du bord droit, le jeu décale l'infobulle vers la gauche
@@ -1714,7 +1717,8 @@ async function readGemCount(bmp, line, quality) {
     // reste illisible et elle contient la souris : c'est elle.
     // (la qualité de la case survolée est souvent cachée par l'infobulle elle-même)
     const unreadIn = unread.filter(b => inCell0(b, tipX) || inCell0(b, tipR0));
-    if (!hits.length && unreadIn.length === 1 && valid.length > 1) {
+    // (pas quand la qualité elle-même est incertaine : deux lectures différentes)
+    if (!hits.length && unreadIn.length === 1 && valid.length > 1 && alt == null) {
       hits.push(unreadIn[0]); olog("gemme : case retenue par élimination (sa qualité est illisible, les autres ne correspondent pas)");
     }
     // Plusieurs cases de même qualité : on garde celles qui contiennent la souris, que l'infobulle soit ouverte à
@@ -1725,6 +1729,7 @@ async function readGemCount(bmp, line, quality) {
       if (ok.length) hits.splice(0, hits.length, ...ok);
     }
     cb = hits[0] || null;
+    if (cb && cb.q != null && cb.q !== quality) { readGemCount.matched = cb.q; olog(`qualité retenue : ${cb.q} (celle écrite dans la case)`); }
     if (hits.length > 1) {
       const sig = b => { const G = gemGlyphs(bmp, b, 35); return G ? G.digits.map(k => classifyGlyph(k, G.cw) || "?").join("") : "?"; };
       if (new Set(hits.map(sig)).size > 1) { olog(`gemme : ${hits.length} cases voisines de qualité ${quality} : case survolée incertaine`); cb = null; }
@@ -1785,9 +1790,10 @@ async function readTooltipBitmap(bmp, line, fallback) {
   }
   if (found && line) {
     // Qualité : celle de sa petite case quand elle est lisible (la ligne entière lisait parfois 74 pour 742).
-    try { const q = await readQualityBox(bmp, line); if (q != null) { if (q !== found.quality) olog(`qualité : ${q} dans sa case (ligne entière : ${found.quality})`); found.quality = q; } } catch (_) {}
+    // Les deux lectures diffèrent : celle de la case est gardée, l'autre reste possible (vérifiée sur la grille pour une gemme).
+    try { const q = await readQualityBox(bmp, line); if (q != null) { if (q !== found.quality) { olog(`qualité : ${q} dans sa case (ligne entière : ${found.quality})`); found.qualityAlt = found.quality; } found.quality = q; } } catch (_) {}
     const nm = found.name.replace(/\s*\((?:M|Ore|Raw)\)\s*$/i, "").trim();
-    if (isGem(matchTarget(nm), nm)) { try { found.count = await readGemCount(bmp, line, found.quality); } catch (_) { found.count = null; } }
+    if (isGem(matchTarget(nm), nm)) { try { found.count = await readGemCount(bmp, line, found.quality, found.qualityAlt); if (readGemCount.matched != null) found.quality = readGemCount.matched; } catch (_) { found.count = null; } }
   }
   return found ? { ...found, proof } : null;
 }
@@ -1804,11 +1810,19 @@ const GEM_NAMES = ["aphorite", "beradom", "carinite", "dolivine", "feynmaline", 
 function isGem(target, name) {
   const r = resOf(target);
   if (r && /objet|gemme/i.test(r.category || "")) return true;
-  return [name, r && r.name, r && r.name_en].filter(Boolean).some(n => GEM_NAMES.includes(norm(String(n).replace(/\s*[([].*$/, ""))));
+  // Nom lu avec une lettre fausse (« Sadsryx ») : gemme connue à une lettre près.
+  return [name, r && r.name, r && r.name_en].filter(Boolean).some(n => { const k = norm(String(n).replace(/\s*[([].*$/, ""));
+    return GEM_NAMES.includes(k) || (k.length >= 5 && GEM_NAMES.filter(g => editDist(k, g) <= 1).length === 1); });
 }
 // Ajoute une caisse lue à la liste à vérifier. Même caisse lue deux fois de suite : décochée (doublon probable).
+// Nom de gemme lu avec une lettre fausse (« Sadsryx ») : corrigé en « Sadaryx » s'il n'y a qu'une gemme aussi proche.
+function gemSpelling(n) {
+  const k = norm(n); if (k.length < 5 || GEM_NAMES.includes(k)) return n;
+  const near = GEM_NAMES.filter(g => editDist(k, g) <= 1);
+  return near.length === 1 ? near[0][0].toUpperCase() + near[0].slice(1) : n;
+}
 function pushOcrItem(r, s, at, windowMs) {
-  const name = r.name.replace(/\s*\((?:M|Ore|Raw)\)\s*$/i, "").trim();
+  const name = gemSpelling(r.name.replace(/\s*\((?:M|Ore|Raw)\)\s*$/i, "").trim());
   const it = { name, quality: String(r.quality), qty: r.qty, unit: "SCU", color: "", hex: "", by: "nom", on: true, target: matchTarget(name),
     shot: s.id, crop: null, proof: r.proof, box: null, confidence: r.confidence ?? null, group: norm(name), ocr: true };
   const prev = st.items.find(x => x.group === it.group);
