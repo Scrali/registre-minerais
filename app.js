@@ -1430,12 +1430,13 @@ async function readGemCount(bmp, line) {
   const d = g.getImageData(0, 0, rw, rh).data, light = new Uint8Array(rw * rh);
   for (let p = 0; p < rw * rh; p++) { const i = p * 4, mx = Math.max(d[i], d[i + 1], d[i + 2]), mn = Math.min(d[i], d[i + 1], d[i + 2]);
     if (0.3 * d[i] + 0.59 * d[i + 1] + 0.11 * d[i + 2] > 135 && (mx - mn) / (mx || 1) < 0.4) light[p] = 1; }
+  const light0 = light.slice();
   // Les cadres des cases (longs traits fins) touchent parfois l'étiquette : on les efface avant de chercher.
   const longH = Math.round(cellW * 0.5), longV = Math.round(cellH * 0.3);
   for (let y = 0; y < rh; y++) { let run = 0; for (let x = 0; x <= rw; x++) { if (x < rw && light[y * rw + x]) run++; else { if (run > longH) for (let k = x - run; k < x; k++) light[y * rw + k] = 0; run = 0; } } }
   for (let x = 0; x < rw; x++) { let run = 0; for (let y = 0; y <= rh; y++) { if (y < rh && light[y * rw + x]) run++; else { if (run > longV) for (let k = y - run; k < y; k++) light[k * rw + x] = 0; run = 0; } } }
   // Étiquettes candidates : rectangles clairs pleins, de la taille d'une étiquette « X N ».
-  const stack = new Int32Array(rw * rh), cands = [];
+  const stack = new Int32Array(rw * rh), parts = [];
   for (let p0 = 0; p0 < rw * rh; p0++) {
     if (light[p0] !== 1) continue;
     let sp = 0, n = 0, x0 = rw, x1 = 0, y0 = rh, y1 = 0; stack[sp++] = p0; light[p0] = 2;
@@ -1444,12 +1445,36 @@ async function readGemCount(bmp, line) {
       if (x > 0 && light[p - 1] === 1) { light[p - 1] = 2; stack[sp++] = p - 1; } if (x < rw - 1 && light[p + 1] === 1) { light[p + 1] = 2; stack[sp++] = p + 1; }
       if (y > 0 && light[p - rw] === 1) { light[p - rw] = 2; stack[sp++] = p - rw; } if (y < rh - 1 && light[p + rw] === 1) { light[p + rw] = 2; stack[sp++] = p + rw; } }
     const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
-    if (bw < cellW * 0.08 || bw > cellW * 0.4 || bh < cellH * 0.04 || bh > cellH * 0.16 || bw < bh * 1.2 || n / (bw * bh) < 0.45) continue;
-    if (rx + x0 < tipX - cellW * 0.1) continue;
-    cands.push({ x: rx + x0, y: ry + y0, w: bw, h: bh });
+    if (n < 6 || bw > cellW * 0.4 || bh > cellH * 0.16) continue;
+    parts.push({ x: x0, y: y0, w: bw, h: bh, n });
+  }
+  // Les chiffres foncés (et l'effacement des cadres) coupent parfois l'étiquette en morceaux : on recolle les morceaux
+  // voisins sur la même rangée avant de juger la forme.
+  parts.sort((a, b) => a.x - b.x);
+  for (let changed = true; changed;) { changed = false;
+    for (let i = 0; i < parts.length && !changed; i++) for (let j = i + 1; j < parts.length && !changed; j++) {
+      const a = parts[i], b = parts[j], ov = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y), mh = Math.max(a.h, b.h);
+      const gap = Math.max(a.x, b.x) - Math.min(a.x + a.w, b.x + b.w);
+      if (ov < Math.min(a.h, b.h) * 0.5 || gap > mh * 0.8) continue;
+      const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
+      const m = { x, y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y, n: a.n + b.n };
+      if (m.w > cellW * 0.4 || m.h > cellH * 0.16) continue;
+      parts.splice(j, 1); parts[i] = m; changed = true;
+    } }
+  const cands = [];
+  for (const b of parts) {
+    if (b.w < cellW * 0.08 || b.h < cellH * 0.04 || b.w < b.h * 1.2 || b.n / (b.w * b.h) < 0.35) continue;
+    if (rx + b.x < tipX - cellW * 0.1) continue;
+    // Une étiquette est un fond clair plein : son pourtour est clair. Une icône (pictogramme clair sur fond sombre) non.
+    let edge = 0, tot = 0;
+    for (let x = b.x; x < b.x + b.w; x++) for (const y of [b.y + 1, b.y + b.h - 2]) { tot++; edge += light0[y * rw + x] ? 1 : 0; }
+    for (let y = b.y; y < b.y + b.h; y++) for (const x of [b.x + 1, b.x + b.w - 2]) { tot++; edge += light0[y * rw + x] ? 1 : 0; }
+    if (edge / tot < 0.6) continue;
+    cands.push({ x: rx + b.x, y: ry + b.y, w: b.w, h: b.h });
   }
   cands.sort((a, b) => a.x - b.x);
   const w = await ocrWorker();
+  const votes = [];
   for (const cb of cands.slice(0, 3)) {
     // Texte foncé sur étiquette claire. Petite étiquette (1080p, 1440p) : plusieurs seuils et modes avant d'abandonner.
     const scale = Math.max(3, Math.min(10, 64 / cb.h));
@@ -1466,10 +1491,13 @@ async function readGemCount(bmp, line) {
       await w.setParameters({ tessedit_pageseg_mode: psm, tessedit_char_whitelist: "Xx0123456789 " });
       const { data } = await w.recognize(cv);
       const m = String(data.text || "").replace(/\s+/g, "").match(/^[xX]?(\d{1,3})$/);
-      if (m && +m[1] > 0) return +m[1];
+      if (m && +m[1] > 0) votes.push(+m[1]);
     }
+    if (votes.length) break;
   }
-  return null;
+  // Plusieurs lectures : on garde le nombre lu en majorité. Sans majorité nette, rien n'est inventé (nombre à saisir).
+  const n = v => votes.filter(x => x === v).length, best = votes.slice().sort((a, b) => n(b) - n(a))[0];
+  return best != null && n(best) * 2 > votes.length ? best : null;
 }
 async function readTooltip(file) {
   const bmp = await createImageBitmap(file);

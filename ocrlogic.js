@@ -11,7 +11,8 @@
     const lines = String(text || "").split(/\r?\n/).map(clean).filter(Boolean);
     for (const raw of lines) {
       if (/volume|capacit|capacity/i.test(raw)) continue;
-      const l = digits(raw);
+      // Point décimal perdu sur une petite image : « 0 001 SCU » = 0.001 SCU (un contenu ne commence jamais par 0 sinon).
+      const l = digits(raw).replace(/(?<=\s)0 (\d{1,6})(?=\s*(?:µ\s?|[cmu]?\s?)SCU\b)/i, "0.$1");
       // nom (lettres, espaces, apostrophes), suffixe facultatif (M) / [M] / (Ore), qualité 0-1000, quantité, unité
       const m = l.match(/([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ' -]{1,40}?)\s*(?:[(\[]\s*(?:M|Ore|Raw|R)\s*[)\]])?\s+(\d{1,4})\s+(\d+(?:[.,]\d+)?)\s*(µ\s?SCU|[cmu]?\s?SCU)\b/i);
       if (!m) continue;
