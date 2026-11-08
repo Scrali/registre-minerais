@@ -1412,7 +1412,7 @@ function findTooltipLine(bmp) {
   return { x: left, y, w: width, h: height };
 }
 // Image préparée pour l'OCR : agrandie, en niveaux de gris, texte clair rendu foncé sur fond blanc.
-function ocrCanvas(bmp, r, scale) {
+function ocrCanvas(bmp, r, scale, keepCols) {
   const c = document.createElement("canvas"); c.width = Math.round(r.w * scale); c.height = Math.round(r.h * scale);
   const g = c.getContext("2d", { willReadFrequently: true }); g.imageSmoothingEnabled = true;
   g.drawImage(bmp, r.x, r.y, r.w, r.h, 0, 0, c.width, c.height);
@@ -1420,11 +1420,71 @@ function ocrCanvas(bmp, r, scale) {
   // Texte de l'infobulle : clair et peu coloré (blanc, crème) ; les fonds colorés des étiquettes deviennent blancs.
   for (let i = 0; i < d.length; i += 4) {
     const mx = Math.max(d[i], d[i + 1], d[i + 2]), mn = Math.min(d[i], d[i + 1], d[i + 2]), l = 0.3 * d[i] + 0.59 * d[i + 1] + 0.11 * d[i + 2];
-    const text = l > 135 && (mx - mn) / (mx || 1) < 0.4;
+    const text = l > 135 && (mx - mn) / (mx || 1) < 0.4 && (!keepCols || keepCols[Math.min(keepCols.length - 1, Math.floor((i / 4 % c.width) / scale))]);
     d[i] = d[i + 1] = d[i + 2] = text ? 0 : 255;
   }
   g.putImageData(im, 0, 0);
   return c;
+}
+// Colonnes de la ligne de l'infobulle qui portent du texte : étiquette du nom, case de la qualité, étiquette du contenu.
+// Entre elles, l'infobulle est transparente : un minerai blanc (quartz) derrière y faisait lire des taches.
+// null si les étiquettes ne sont pas reconnues (on lit alors toute la ligne).
+function lineKeepCols(bmp, line) {
+  const { x: lx, y: ly, w: lw, h: lh } = line, c = document.createElement("canvas"); c.width = lw; c.height = lh;
+  const g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(bmp, lx, ly, lw, lh, 0, 0, lw, lh);
+  const d = g.getImageData(0, 0, lw, lh).data, keep = new Uint8Array(lw), raw = new Uint8Array(lw);
+  for (let x = 0; x < lw; x++) { let b = 0, o = 0, t = 0;
+    for (let y = 0; y < lh; y++) { const i = (y * lw + x) * 4, mx = Math.max(d[i], d[i + 1], d[i + 2]), mn = Math.min(d[i], d[i + 1], d[i + 2]), s = mx ? (mx - mn) / mx : 0;
+      if (isBadge(d, i)) b++; if (isOlive(d, i, true)) o++; if (mx > 56 && mx < 166 && s >= 0.05 && s <= 0.42) t++; }
+    if (b >= lh * 0.2 || o >= lh * 0.2 || t >= lh * 0.2) raw[x] = 1; }
+  const pad = Math.round(lh * 0.3);
+  for (let x = 0; x < lw; x++) if (raw[x]) for (let k = Math.max(0, x - pad); k <= Math.min(lw - 1, x + pad); k++) keep[k] = 1;
+  const n = keep.reduce((a, v) => a + v, 0);
+  return n >= lw * 0.25 ? keep : null;
+}
+// Qualité lue seule dans sa petite case gris-vert de l'infobulle (entre l'étiquette du nom et le contenu). Plus fiable
+// que la ligne entière, surtout quand l'infobulle passe sur un minerai blanc (quartz). null si la case n'est pas trouvée.
+async function readQualityBox(bmp, line) {
+  const { x: lx, y: ly, w: lw, h: lh } = line, c = document.createElement("canvas"); c.width = lw; c.height = lh;
+  const g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(bmp, lx, ly, lw, lh, 0, 0, lw, lh);
+  const d = g.getImageData(0, 0, lw, lh).data;
+  const boxPx = i => { const r = d[i] / 255, gg = d[i + 1] / 255, b = d[i + 2] / 255, mx = Math.max(r, gg, b), mn = Math.min(r, gg, b);
+    // Fond de la case : terne (peu saturé), ni sombre ni clair. Le fond orangé de l'écran est bien plus saturé.
+    if (mx < 0.22 || mx > 0.65 || mx === mn) return false; const s = (mx - mn) / mx; return s >= 0.05 && s <= 0.42; };
+  const white = i => { const mx = Math.max(d[i], d[i + 1], d[i + 2]), mn = Math.min(d[i], d[i + 1], d[i + 2]);
+    return 0.3 * d[i] + 0.59 * d[i + 1] + 0.11 * d[i + 2] > 150 && (mx - mn) / (mx || 1) < 0.35; };
+  const col = new Int32Array(lw), bad = new Int32Array(lw), wt = new Int32Array(lw);
+  for (let x = 0; x < lw; x++) for (let y = 0; y < lh; y++) { const i = (y * lw + x) * 4; if (boxPx(i)) col[x]++; if (white(i)) wt[x]++; if (isBadge(d, i)) bad[x]++; }
+  // Colonne de la case : fond terne, chiffres blancs compris (sinon la case s'arrêtait au milieu d'un « 8 »).
+  const inBox = x => col[x] >= lh * 0.15 && col[x] + wt[x] >= lh * 0.45;
+  let x = 0; while (x < lw && bad[x] >= lh * 0.25) x++;   // fin de l'étiquette du nom
+  for (let k = 0; x < lw && k < lh * 0.6; x++) { if (bad[x] >= lh * 0.25) k = 0; else k++; }
+  let bx0 = -1, bx1 = -1;
+  for (; x < lw; x++) { if (inBox(x)) { if (bx0 < 0) bx0 = x; bx1 = x; } else if (bx0 >= 0 && x - bx1 > lh * 0.15) { if (bx1 - bx0 >= lh * 0.8) break; bx0 = bx1 = -1; } }
+  if (bx0 < 0 || bx1 - bx0 < lh * 0.8 || bx1 - bx0 > lh * 4) return null;
+  let by0 = lh, by1 = -1;
+  for (let y = 0; y < lh; y++) { let n = 0; for (let xx = bx0; xx <= bx1; xx++) if (boxPx((y * lw + xx) * 4)) n++; if (n >= (bx1 - bx0 + 1) * 0.25) { if (y < by0) by0 = y; by1 = y; } }
+  if (by1 - by0 < lh * 0.35) return null;
+  const box = { x: lx + bx0, y: ly + by0, w: bx1 - bx0 + 1, h: by1 - by0 + 1 };
+  const wk = await ocrWorker(), reads = [];
+  for (const off of [40, 25, 60]) {
+    const scale = Math.max(1, Math.min(10, 70 / box.h)), o = document.createElement("canvas");
+    o.width = Math.round(box.w * scale) + 30; o.height = Math.round(box.h * scale) + 30;
+    const og = o.getContext("2d", { willReadFrequently: true }); og.fillStyle = "#fff"; og.fillRect(0, 0, o.width, o.height);
+    og.imageSmoothingEnabled = true; og.drawImage(bmp, box.x, box.y, box.w, box.h, 15, 15, o.width - 30, o.height - 30);
+    const im = og.getImageData(15, 15, o.width - 30, o.height - 30), dd = im.data; let sum = 0, n = 0;
+    for (let i = 0; i < dd.length; i += 4) { sum += 0.3 * dd[i] + 0.59 * dd[i + 1] + 0.11 * dd[i + 2]; n++; }
+    const thr = sum / n + off;   // chiffres clairs sur le fond de la case
+    for (let i = 0; i < dd.length; i += 4) { const l = 0.3 * dd[i] + 0.59 * dd[i + 1] + 0.11 * dd[i + 2]; dd[i] = dd[i + 1] = dd[i + 2] = l > thr ? 0 : 255; }
+    og.putImageData(im, 15, 15);
+    await wk.setParameters({ tessedit_pageseg_mode: "7", tessedit_char_whitelist: "0123456789" });
+    const { data } = await wk.recognize(o);
+    const m = String(data.text || "").replace(/\s+/g, "").match(/^\d{1,4}$/);
+    if (m && +m[0] <= 1000) reads.push(+m[0]);
+  }
+  // Majorité des lectures ; sans majorité, rien.
+  const cnt = v => reads.filter(r => r === v).length, best = reads.slice().sort((a, b) => cnt(b) - cnt(a))[0];
+  return best != null && cnt(best) * 2 > reads.length ? best : null;
 }
 // Gemmes : le nombre est le « X N » en haut à droite de la case survolée. L'infobulle s'ouvre au curseur, donc ce coin
 // est juste au-dessus et à droite du coin haut-gauche de l'infobulle. On garde le premier « X N » à droite du curseur.
@@ -1657,8 +1717,10 @@ async function readTooltipBitmap(bmp, line, fallback) {
     await w.setParameters({ tessedit_pageseg_mode: "7",
       tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÀÂÄÇÉÈÊËÎÏÔÖÙÛÜàâäçéèêëîïôöùûüŒœ0123456789.,()[]'µ -" });
     const scale = Math.max(1.2, Math.min(8, 66 / line.h));   // ligne d'environ 66 px (texte ~40 px) quelle que soit la résolution
-    const { data } = await w.recognize(ocrCanvas(bmp, line, scale));
+    let { data } = await w.recognize(ocrCanvas(bmp, line, scale));
     found = OcrLogic.parseTooltip(data.text);
+    // Illisible : nouvel essai en ne gardant que les étiquettes (fond transparent ignoré, utile sur le quartz).
+    if (!found) { const keep = lineKeepCols(bmp, line); if (keep) { ({ data } = await w.recognize(ocrCanvas(bmp, line, scale, keep))); found = OcrLogic.parseTooltip(data.text); } }
     if (found) found.confidence = (data.confidence || 0) / 100;
     const p = document.createElement("canvas"); p.width = Math.min(320, line.w); p.height = Math.round(line.h * p.width / line.w);
     p.getContext("2d").drawImage(bmp, line.x, line.y, line.w, line.h, 0, 0, p.width, p.height);
@@ -1672,6 +1734,8 @@ async function readTooltipBitmap(bmp, line, fallback) {
     if (found) found.confidence = Math.min(0.6, (data.confidence || 0) / 100);
   }
   if (found && line) {
+    // Qualité : celle de sa petite case quand elle est lisible (la ligne entière lisait parfois 74 pour 742).
+    try { const q = await readQualityBox(bmp, line); if (q != null) { if (q !== found.quality) olog(`qualité : ${q} dans sa case (ligne entière : ${found.quality})`); found.quality = q; } } catch (_) {}
     const nm = found.name.replace(/\s*\((?:M|Ore|Raw)\)\s*$/i, "").trim();
     if (isGem(matchTarget(nm), nm)) { try { found.count = await readGemCount(bmp, line, found.quality); } catch (_) { found.count = null; } }
   }
