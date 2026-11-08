@@ -1624,14 +1624,17 @@ async function frameTooltip(bmp, shot, fs, at) {
         const n = v1 != null && v1 === v2 ? v1 : (v1 == null) !== (v2 == null) && (plausible(one) || c.n == null) ? one : null;
         olog(`compteur ${c.r.x},${c.r.y} : ${c.n ?? "?"} -> ${n ?? `ignoré (${v1 ?? "?"}/${v2 ?? "?"})`}`);
         if (n == null) continue;
-        if (c.n != null && n > c.n) { fs.pending = at + 4000; fs.diag.clicks++; olog("clic repéré : attente de l'infobulle"); }
+        if (c.n != null && n > c.n) { fs.pending = at + 4000; fs.clickFrame = true; fs.diag.clicks++; olog(`clic repéré${line ? "" : " (pas d'infobulle sur cette image : attente)"}`); }
         c.n = n;
       }
       fs.diag.counters = fs.counters.map(c => c.n ?? "?").join(" / ");
       const sigNow = line ? lineSig(bmp, line) : "";
       if (!fs.pending) { fs.prevLine = line; fs.prevSig = sigNow; return null; }
       if (at > fs.pending) { fs.pending = 0; olog("aucune infobulle nouvelle vue dans les 4 s après le clic"); return { added: false, missed: true }; }
-      if (!line || (fs.lastLine && Math.abs(line.x - fs.lastLine.x) + Math.abs(line.y - fs.lastLine.y) <= 12 && sigDiff(sigNow, fs.lastSig) <= 0.08)) return null;
+      // Infobulle de l'image même du clic (la caisse survolée au moment du clic) ; sinon, la première nouvelle infobulle.
+      const onClick = fs.clickFrame; fs.clickFrame = false;
+      const sameAsLast = line && fs.lastLine && Math.abs(line.x - fs.lastLine.x) + Math.abs(line.y - fs.lastLine.y) <= 12 && sigDiff(sigNow, fs.lastSig) <= 0.08;
+      if (!line || (sameAsLast && !onClick)) return null;
       fs.pending = 0; fs.lastLine = line; fs.lastSig = sigNow;
       const r = await readTooltipBitmap(bmp, line, false);
       olog(r ? `infobulle lue : ${r.line}` : `infobulle vue en ${line.x},${line.y} mais texte illisible`);
