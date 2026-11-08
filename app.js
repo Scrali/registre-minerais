@@ -1631,56 +1631,60 @@ async function readGemCount(bmp, line, quality) {
   const rw = Math.min(W - rx, Math.round(line.w + line.h * 1.6 + cellW * 1.4)), rh = Math.min(H - ry, Math.round(cellH * 1.45));
   const c = document.createElement("canvas"); c.width = rw; c.height = rh;
   const g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(bmp, rx, ry, rw, rh, 0, 0, rw, rh);
-  const d = g.getImageData(0, 0, rw, rh).data, light = new Uint8Array(rw * rh);
-  for (let p = 0; p < rw * rh; p++) { const i = p * 4, mx = Math.max(d[i], d[i + 1], d[i + 2]), mn = Math.min(d[i], d[i + 1], d[i + 2]);
-    if (0.3 * d[i] + 0.59 * d[i + 1] + 0.11 * d[i + 2] > 115 && (mx - mn) / (mx || 1) < 0.4) light[p] = 1; }
-  const light0 = light.slice();
-  // Les cadres des cases (longs traits fins) touchent parfois l'étiquette : on les efface avant de chercher.
-  const longH = Math.round(cellW * 0.5), longV = Math.round(cellH * 0.3);
-  for (let y = 0; y < rh; y++) { let run = 0; for (let x = 0; x <= rw; x++) { if (x < rw && light[y * rw + x]) run++; else { if (run > longH) for (let k = x - run; k < x; k++) light[y * rw + k] = 0; run = 0; } } }
-  for (let x = 0; x < rw; x++) { let run = 0; for (let y = 0; y <= rh; y++) { if (y < rh && light[y * rw + x]) run++; else { if (run > longV) for (let k = y - run; k < y; k++) light[k * rw + x] = 0; run = 0; } } }
-  // Étiquettes candidates : rectangles clairs pleins, de la taille d'une étiquette « X N ».
-  const stack = new Int32Array(rw * rh), parts = [];
-  for (let p0 = 0; p0 < rw * rh; p0++) {
-    if (light[p0] !== 1) continue;
-    let sp = 0, n = 0, x0 = rw, x1 = 0, y0 = rh, y1 = 0; stack[sp++] = p0; light[p0] = 2;
-    while (sp) { const p = stack[--sp], x = p % rw, y = (p - x) / rw; n++;
-      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
-      if (x > 0 && light[p - 1] === 1) { light[p - 1] = 2; stack[sp++] = p - 1; } if (x < rw - 1 && light[p + 1] === 1) { light[p + 1] = 2; stack[sp++] = p + 1; }
-      if (y > 0 && light[p - rw] === 1) { light[p - rw] = 2; stack[sp++] = p - rw; } if (y < rh - 1 && light[p + rw] === 1) { light[p + rw] = 2; stack[sp++] = p + rw; } }
-    const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
-    if (n < 6 || bw > cellW * 0.4 || bh > cellH * 0.16) continue;
-    parts.push({ x: x0, y: y0, w: bw, h: bh, n });
-  }
-  // Les chiffres foncés (et l'effacement des cadres) coupent parfois l'étiquette en morceaux : on recolle les morceaux
-  // voisins sur la même rangée avant de juger la forme.
-  parts.sort((a, b) => a.x - b.x);
-  for (let changed = true; changed;) { changed = false;
-    for (let i = 0; i < parts.length && !changed; i++) for (let j = i + 1; j < parts.length && !changed; j++) {
-      const a = parts[i], b = parts[j], ov = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y), mh = Math.max(a.h, b.h);
-      const gap = Math.max(a.x, b.x) - Math.min(a.x + a.w, b.x + b.w);
-      if (ov < Math.min(a.h, b.h) * 0.5 || gap > mh * 0.3) continue;
-      const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
-      const m = { x, y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y, n: a.n + b.n };
-      if (m.w > cellW * 0.4 || m.h > cellH * 0.16) continue;
-      parts.splice(j, 1); parts[i] = m; changed = true;
-    } }
+  // Étiquettes claires d'abord ; une étiquette grise d'une case non sélectionnée peut être plus terne : second essai.
   const cands = [];
-  for (const b of parts) {
-    // Taille d'une étiquette : environ 1,7 % de la hauteur de l'écran (mesuré en 2K et en 4K).
-    if (b.w < cellW * 0.08 || b.h < H * 0.011 || b.h > H * 0.026 || b.w < b.h * 1.0 || b.n / (b.w * b.h) < 0.35) continue;
-    // La case survolée contient la souris (≈ coin de l'infobulle) : son étiquette, en haut à droite, finit à droite
-    // de la souris et se trouve au-dessus d'elle.
-    if (rx + b.x + b.w < tipX - cellW * 0.05 || ry + b.y > tipY + cellH * 0.05) continue;
-    // Étiquette « X N » : vert pâle (case sélectionnée) ou gris terne (case non sélectionnée). Les chiffres de qualité
-    // (« 1000 Q »), les icônes et les textes sont blanc crème, plus clairs et plus rouges. Couleur moyenne des pixels clairs.
-    let sr = 0, sg = 0, sl = 0, nn = 0;
-    for (let y = b.y; y < b.y + b.h; y++) for (let x = b.x; x < b.x + b.w; x++) { const p = y * rw + x; if (!light0[p]) continue;
-      sr += d[p * 4]; sg += d[p * 4 + 1]; sl += 0.3 * d[p * 4] + 0.59 * d[p * 4 + 1] + 0.11 * d[p * 4 + 2]; nn++; }
-    if (!nn) continue;
-    const mint = (sg - sr) / nn >= 6, grey = sl / nn < 190 && b.n / (b.w * b.h) >= 0.5;
-    if (!mint && !grey) continue;
-    cands.push({ x: rx + b.x, y: ry + b.y, w: b.w, h: b.h });
+  for (const lumThr of [115, 95]) {
+    const d = g.getImageData(0, 0, rw, rh).data, light = new Uint8Array(rw * rh);
+    for (let p = 0; p < rw * rh; p++) { const i = p * 4, mx = Math.max(d[i], d[i + 1], d[i + 2]), mn = Math.min(d[i], d[i + 1], d[i + 2]);
+      if (0.3 * d[i] + 0.59 * d[i + 1] + 0.11 * d[i + 2] > lumThr && (mx - mn) / (mx || 1) < 0.4) light[p] = 1; }
+    const light0 = light.slice();
+    // Les cadres des cases (longs traits fins) touchent parfois l'étiquette : on les efface avant de chercher.
+    const longH = Math.round(cellW * 0.5), longV = Math.round(cellH * 0.3);
+    for (let y = 0; y < rh; y++) { let run = 0; for (let x = 0; x <= rw; x++) { if (x < rw && light[y * rw + x]) run++; else { if (run > longH) for (let k = x - run; k < x; k++) light[y * rw + k] = 0; run = 0; } } }
+    for (let x = 0; x < rw; x++) { let run = 0; for (let y = 0; y <= rh; y++) { if (y < rh && light[y * rw + x]) run++; else { if (run > longV) for (let k = y - run; k < y; k++) light[k * rw + x] = 0; run = 0; } } }
+    // Étiquettes candidates : rectangles clairs pleins, de la taille d'une étiquette « X N ».
+    const stack = new Int32Array(rw * rh), parts = [];
+    for (let p0 = 0; p0 < rw * rh; p0++) {
+      if (light[p0] !== 1) continue;
+      let sp = 0, n = 0, x0 = rw, x1 = 0, y0 = rh, y1 = 0; stack[sp++] = p0; light[p0] = 2;
+      while (sp) { const p = stack[--sp], x = p % rw, y = (p - x) / rw; n++;
+        if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+        if (x > 0 && light[p - 1] === 1) { light[p - 1] = 2; stack[sp++] = p - 1; } if (x < rw - 1 && light[p + 1] === 1) { light[p + 1] = 2; stack[sp++] = p + 1; }
+        if (y > 0 && light[p - rw] === 1) { light[p - rw] = 2; stack[sp++] = p - rw; } if (y < rh - 1 && light[p + rw] === 1) { light[p + rw] = 2; stack[sp++] = p + rw; } }
+      const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+      if (n < 6 || bw > cellW * 0.4 || bh > cellH * 0.16) continue;
+      parts.push({ x: x0, y: y0, w: bw, h: bh, n });
+    }
+    // Les chiffres foncés (et l'effacement des cadres) coupent parfois l'étiquette en morceaux : on recolle les morceaux
+    // voisins sur la même rangée avant de juger la forme.
+    parts.sort((a, b) => a.x - b.x);
+    for (let changed = true; changed;) { changed = false;
+      for (let i = 0; i < parts.length && !changed; i++) for (let j = i + 1; j < parts.length && !changed; j++) {
+        const a = parts[i], b = parts[j], ov = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y), mh = Math.max(a.h, b.h);
+        const gap = Math.max(a.x, b.x) - Math.min(a.x + a.w, b.x + b.w);
+        if (ov < Math.min(a.h, b.h) * 0.5 || gap > mh * 0.3) continue;
+        const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
+        const m = { x, y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y, n: a.n + b.n };
+        if (m.w > cellW * 0.4 || m.h > cellH * 0.16 || m.w > Math.min(a.h, b.h) * 3.4) continue;
+        parts.splice(j, 1); parts[i] = m; changed = true;
+      } }
+    for (const b of parts) {
+      // Taille d'une étiquette : environ 1,7 % de la hauteur de l'écran (mesuré en 2K et en 4K).
+      if (b.w < cellW * 0.08 || b.h < H * 0.011 || b.h > H * 0.026 || b.w < b.h * 1.0 || b.w > b.h * 3.4 || b.n / (b.w * b.h) < 0.35) continue;
+      // La case survolée contient la souris (≈ coin de l'infobulle) : son étiquette, en haut à droite, finit à droite
+      // de la souris et se trouve au-dessus d'elle.
+      if (rx + b.x + b.w < tipX - cellW * 0.05 || ry + b.y > tipY + cellH * 0.05) continue;
+      // Étiquette « X N » : vert pâle (case sélectionnée) ou gris terne (case non sélectionnée). Les chiffres de qualité
+      // (« 1000 Q »), les icônes et les textes sont blanc crème, plus clairs et plus rouges. Couleur moyenne des pixels clairs.
+      let sr = 0, sg = 0, sl = 0, nn = 0;
+      for (let y = b.y; y < b.y + b.h; y++) for (let x = b.x; x < b.x + b.w; x++) { const p = y * rw + x; if (!light0[p]) continue;
+        sr += d[p * 4]; sg += d[p * 4 + 1]; sl += 0.3 * d[p * 4] + 0.59 * d[p * 4 + 1] + 0.11 * d[p * 4 + 2]; nn++; }
+      if (!nn) continue;
+      const mint = (sg - sr) / nn >= 6, grey = sl / nn < 190 && b.n / (b.w * b.h) >= 0.5;
+      if (!mint && !grey) continue;
+      cands.push({ x: rx + b.x, y: ry + b.y, w: b.w, h: b.h });
+    }
+    if (cands.length) break;
   }
   // Étiquette de la case survolée : la rangée la plus proche au-dessus de la souris, puis la première à sa droite.
   const rowY = Math.max(-1, ...cands.map(b => b.y));
