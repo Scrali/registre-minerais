@@ -1233,7 +1233,26 @@ function matchTarget(name) {
   // Correspondance partielle : jamais entre un minerai brut « X (Ore) » et la ressource raffinée « X ».
   const ore = t => /[([]\s*(ore|raw|brut)\s*[)\]]|\bbrut\b/i.test(t);
   if (!r) r = st.resources.find(x => { const k = norm(x.name); return ore(x.name) === ore(name) && k.length > 3 && (k.includes(n) || n.includes(k)); });
+  // Une lettre mal lue (« Quartf » pour « Quartz ») : nom du catalogue à une lettre près (deux pour un nom long),
+  // seulement s'il n'y en a qu'un seul aussi proche.
+  if (!r && n.length >= 4) {
+    const max = n.length >= 9 ? 2 : 1, near = [];
+    for (const x of st.resources) { if (ore(x.name) !== ore(name)) continue;
+      const d = Math.min(editDist(n, norm(x.name)), x.name_en ? editDist(n, norm(x.name_en)) : 99);
+      if (d <= max) near.push([x, d]); }
+    const best = Math.min(...near.map(v => v[1]));
+    const top = near.filter(v => v[1] === best);
+    if (top.length === 1) r = top[0][0];
+  }
   return r ? r.id : "new";
+}
+function editDist(a, b) {
+  if (Math.abs(a.length - b.length) > 2) return 99;
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) { const cur = [i];
+    for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur; }
+  return prev[b.length];
 }
 
 // Cases probablement répétées entre deux pages qui se chevauchent : décochées, avec un avertissement.
@@ -1640,7 +1659,7 @@ async function readGemCount(bmp, line, quality) {
     for (let i = 0; i < parts.length && !changed; i++) for (let j = i + 1; j < parts.length && !changed; j++) {
       const a = parts[i], b = parts[j], ov = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y), mh = Math.max(a.h, b.h);
       const gap = Math.max(a.x, b.x) - Math.min(a.x + a.w, b.x + b.w);
-      if (ov < Math.min(a.h, b.h) * 0.5 || gap > mh * 0.8) continue;
+      if (ov < Math.min(a.h, b.h) * 0.5 || gap > mh * 0.3) continue;
       const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
       const m = { x, y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y, n: a.n + b.n };
       if (m.w > cellW * 0.4 || m.h > cellH * 0.16) continue;
@@ -1649,7 +1668,7 @@ async function readGemCount(bmp, line, quality) {
   const cands = [];
   for (const b of parts) {
     // Taille d'une étiquette : environ 1,7 % de la hauteur de l'écran (mesuré en 2K et en 4K).
-    if (b.w < cellW * 0.08 || b.h < H * 0.011 || b.h > H * 0.026 || b.w < b.h * 1.2 || b.n / (b.w * b.h) < 0.35) continue;
+    if (b.w < cellW * 0.08 || b.h < H * 0.011 || b.h > H * 0.026 || b.w < b.h * 1.0 || b.n / (b.w * b.h) < 0.35) continue;
     // La case survolée contient la souris (≈ coin de l'infobulle) : son étiquette, en haut à droite, finit à droite
     // de la souris et se trouve au-dessus d'elle.
     if (rx + b.x + b.w < tipX - cellW * 0.05 || ry + b.y > tipY + cellH * 0.05) continue;
@@ -1675,9 +1694,23 @@ async function readGemCount(bmp, line, quality) {
   let cb = valid[0], seen = [];
   if (quality != null && valid.length) {
     cb = null;
+    // Toutes les cases proches sont vérifiées : deux cases de même qualité (deux « 1000 Q » côte à côte) rendent le
+    // choix incertain si leurs « X N » diffèrent.
+    const hits = [];
     for (const b of valid) {
-      for (const thr of [165, 140, 190]) { const q = await readCellQuality(bmp, b, thr); seen.push(q); if (sameCellQuality(q, quality)) { cb = b; break; } }
-      if (cb) break;
+      for (const thr of [165, 140, 190]) { const q = await readCellQuality(bmp, b, thr); seen.push(q); if (sameCellQuality(q, quality)) { hits.push(b); break; } }
+    }
+    // Plusieurs cases de même qualité : on garde celles qui contiennent la souris, que l'infobulle soit ouverte à
+    // droite de la souris (coin gauche de l'infobulle dans la case) ou à gauche (coin droit dans la case).
+    if (hits.length > 1) {
+      const tipR = line.x + line.w + line.h * 0.8, inCell = (b, x) => x >= b.x + b.w - cellW * 0.97 && x <= b.x + b.w + cellW * 0.05;
+      const ok = hits.filter(b => inCell(b, tipX) || inCell(b, tipR));
+      if (ok.length) hits.splice(0, hits.length, ...ok);
+    }
+    cb = hits[0] || null;
+    if (hits.length > 1) {
+      const sig = b => { const G = gemGlyphs(bmp, b, 35); return G ? G.digits.map(k => classifyGlyph(k, G.cw) || "?").join("") : "?"; };
+      if (new Set(hits.map(sig)).size > 1) { olog(`gemme : ${hits.length} cases voisines de qualité ${quality} : case survolée incertaine`); cb = null; }
     }
     if (!cb && seen.every(q => q == null)) cb = valid[0];
   }
