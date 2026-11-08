@@ -300,4 +300,6 @@ test("Nom anglais d'une ressource : droit catalogue, jamais en double", async ()
   assert.equal((await db.query(`select name_en from resources where id = $1`, [fer])).rows[0].name_en, "Iron");
   await rejects(rpc(db, admin, "set_resource_name_en", [agri, "iron"]), /autre ressource/);
   await rejects(rpc(db, admin, "set_resource_name_en", [agri, "Quantainium"]), /autre ressource/);
+  const brut = await rpc(db, admin, "create_resource", [J({ name: "Agricium (brut)" }), "manuel", ""]);
+  await rpc(db, admin, "set_resource_name_en", [brut, "Agricium (Ore)"]);   // le minerai brut garde son propre nom anglais
 });

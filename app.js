@@ -256,7 +256,9 @@ async function loadResources() {
   setStatus("");
   st.resources = data || [];
   renderAllStocks();
-  $("#resList").innerHTML = st.resources.map(r => `<option value="${esc(r.name)}">`).join("");
+  // Les deux noms sont proposés à la saisie : « Cuivre » comme « Copper ».
+  $("#resList").innerHTML = st.resources.map(r => `<option value="${esc(r.name)}">${r.name_en ? esc(r.name_en) : ""}</option>`
+    + (r.name_en && norm(r.name_en) !== norm(r.name) ? `<option value="${esc(r.name_en)}">${esc(r.name)}</option>` : "")).join("");
   if (!$("#dbView").hidden) renderDb();
 }
 async function loadMoves() {
@@ -368,6 +370,9 @@ const unitTxt = u => u ? " " + u : "";
 const locName = id => (st.locations.find(l => l.id === id) || {}).name || "Lieu inconnu";
 const who = id => (st.profiles[id] || {}).pseudo || "Membre";
 const resOf = id => st.resources.find(r => r.id === id);
+// Une ressource se retrouve par son nom français ou anglais.
+const resMatch = (r, q) => !!r && (norm(r.name).includes(q) || (!!r.name_en && norm(r.name_en).includes(q)));
+const resByName = n => { const k = norm(n); return k ? st.resources.find(r => norm(r.name) === k) || st.resources.find(r => r.name_en && norm(r.name_en) === k) : undefined; };
 const isOwner = () => !!(st.me && st.me.is_owner);
 const isAdmin = () => !!(st.me && (st.me.is_owner || st.me.role === "admin"));
 // Droit d'un membre ; un administrateur (ou le propriétaire) les a tous.
@@ -495,7 +500,7 @@ function stocksFiltered() {
   return st.stocks.filter(s => {
     if (!(num(s.quantity) > 0)) return false;
     const r = resOf(s.resource_id);
-    if (q && !(r && (norm(r.name).includes(q) || norm(r.category).includes(q)))) return false;
+    if (q && !(r && (resMatch(r, q) || norm(r.category).includes(q)))) return false;
     if (c && (!r || r.category !== c)) return false;
     if (loc && s.location_id !== loc) return false;
     if (mb && s.user_id !== mb) return false;
@@ -596,7 +601,7 @@ function renderMine() {
   }).join("");
   $("#moveForm").hidden = !canEdit;
   const rs = $("#mvRes"), cur = rs.value;
-  rs.innerHTML = st.resources.slice().sort(byName).map(r => `<option value="${esc(r.id)}">${esc(r.name)}</option>`).join("");
+  rs.innerHTML = st.resources.slice().sort(byName).map(r => `<option value="${esc(r.id)}">${esc(r.name)}${r.name_en && norm(r.name_en) !== norm(r.name) ? " (" + esc(r.name_en) + ")" : ""}</option>`).join("");
   if (cur && st.resources.some(r => r.id === cur)) rs.value = cur;
   if (!$("#mvPlace").value) $("#mvPlace").value = loc ? locName(loc) : $("#capPlace").value;
   renderMvLots();
@@ -869,7 +874,7 @@ $("#resForm").addEventListener("submit", async e => {
   };
   if (!v.name) return;
   const r = editing;
-  if (!r && st.resources.some(x => norm(x.name) === norm(v.name))) { $("#fName").setCustomValidity("Cette ressource existe déjà."); $("#fName").reportValidity(); $("#fName").setCustomValidity(""); return; }
+  if (!r && resByName(v.name)) { $("#fName").setCustomValidity("Cette ressource existe déjà."); $("#fName").reportValidity(); $("#fName").setCustomValidity(""); return; }
   $("#fSave").disabled = true;
   try {
     // Mise à jour du catalogue seulement : un écart vide ne crée aucun mouvement de stock.
@@ -1664,7 +1669,7 @@ $("#compare").addEventListener("click", async () => {
     const fresh = new Map();
     for (const it of st.items) if (it.on && it.target === "new") { const k = norm(it.name); if (!fresh.has(k)) fresh.set(k, it); }
     for (const [k, it] of fresh) {
-      const known = st.resources.find(r => norm(r.name) === k);
+      const known = resByName(it.name);
       const id = known ? known.id : await createResource({ name: it.name, unit: "", color: it.hex, color_name: it.color }, "capture", "");
       for (const x of st.items) if (x.target === "new" && norm(x.name) === k) x.target = id;
     }
@@ -1784,9 +1789,9 @@ async function addToLibrary(resourceId, image, terminal, source) {
 function renderImages() {
   const q = norm($("#iQ").value), t = $("#iTerm").value;
   const rs = $("#iRes"), cur = rs.value;
-  rs.innerHTML = st.resources.slice().sort(byName).map(r => `<option value="${esc(r.id)}">${esc(r.name)}</option>`).join("");
+  rs.innerHTML = st.resources.slice().sort(byName).map(r => `<option value="${esc(r.id)}">${esc(r.name)}${r.name_en && norm(r.name_en) !== norm(r.name) ? " (" + esc(r.name_en) + ")" : ""}</option>`).join("");
   if (cur && st.resources.some(r => r.id === cur)) rs.value = cur;
-  const list = st.resources.filter(r => !q || norm(r.name).includes(q)).sort(byName);
+  const list = st.resources.filter(r => !q || resMatch(r, q)).sort(byName);
   let shown = 0;
   $("#imgGrid").innerHTML = list.map(r => {
     const imgs = libOf(r.id).filter(x => !t || x.terminal_type === t);
@@ -1942,7 +1947,7 @@ $("#rqCancelEdit").addEventListener("click", () => { rqResetForm(); $("#rqMsg").
 $("#rqForm").addEventListener("submit", async e => {
   e.preventDefault();
   const m = $("#rqMsg"), name = $("#rqRes").value.trim();
-  const res = st.resources.find(r => norm(r.name) === norm(name));
+  const res = resByName(name);
   const p = { resource_id: res ? res.id : "", resource_name: name, quantity: num($("#rqQty").value), unit: $("#rqUnit").value.trim(),
     min_quality: $("#rqQ").value === "" ? "" : Math.round(num($("#rqQ").value)), location: $("#rqPlace").value.trim(),
     needed_by: $("#rqBy").value, priority: $("#rqUrgent").checked ? "urgent" : "normal", note: $("#rqNote").value.trim() };
@@ -2081,7 +2086,7 @@ function renderBlueprints() {
     if (type && (b.output_type_label || b.output_type) !== type) return false;
     if (own === "me" && !bpOwners(b).includes(me)) return false;
     if (own === "org" && !bpOwners(b).length) return false;
-    if (q && !norm(b.output_name + " " + b.key).includes(q) && !bpIng(b).some(i => norm(i.name).includes(q))) return false;
+    if (q && !norm(b.output_name + " " + b.key).includes(q) && !bpIng(b).some(i => norm(i.name).includes(q) || resMatch(resOf(bp.map[i.api_uuid]), q))) return false;
     if (own === "ok" && bpVerdict(b).craftable !== true) return false;
     return true;
   });
@@ -2322,7 +2327,7 @@ function dbRow(r) {
 }
 function renderDb() {
   const q = norm($("#dbQ").value);
-  const rows = st.resources.filter(r => !q || norm(r.name).includes(q) || norm(r.category).includes(q)).sort((a, b) => a.name.localeCompare(b.name));
+  const rows = st.resources.filter(r => !q || resMatch(r, q) || norm(r.category).includes(q)).sort((a, b) => a.name.localeCompare(b.name));
   const body = $("#dbBody");
   const keep = new Map([...body.querySelectorAll("tr[data-id]")].filter(tr => dirty.has(tr.dataset.id)).map(tr => [tr.dataset.id, tr]));
   const tmp = document.createElement("tbody");
