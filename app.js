@@ -1333,7 +1333,8 @@ function findTooltipLine(bmp) {
     if (mx !== mn) hue = mx === r ? 60 * (((gg - b) / (mx - mn)) % 6) : mx === gg ? 60 * ((b - r) / (mx - mn) + 2) : 60 * ((r - gg) / (mx - mn) + 4);
     if (hue < 0) hue += 360;
     // Étiquette violette / magenta du nom (« Cuivre (M) »), tolérante aux variations d'éclairage et de compression.
-    if (hue >= 265 && hue <= 340 && s > 0.3 && mx > 0.25) { rows[y]++; pts.push([x, y]); }
+    // Mesuré sur le jeu : ~345° sous l'éclairage orangé du terminal de fret, ~290-320° ailleurs.
+    if (hue >= 260 && hue <= 356 && s > 0.3 && mx > 0.25) { rows[y]++; pts.push([x, y]); }
   }
   let best = -1, bestN = 2;
   for (let y = 0; y < h; y++) if (rows[y] > bestN) { bestN = rows[y]; best = y; }
