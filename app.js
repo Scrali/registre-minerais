@@ -1482,6 +1482,7 @@ function selectionEdges(bmp) {
     if (l > 130 && S[p] < 35 && l - L[p - k] > 40 && l - L[p + k] > 40) line[p] = 1;
   }
   const used = new Uint8Array(W * H), minLen = Math.round(H * 0.09), keys = new Set();
+  // Un bord = position horizontale + rangée de cases (centre vertical) : stable d'une image à l'autre.
   for (let y = 0; y < H - 1; y++) for (let x = 0; x < W; x++) {
     const p = y * W + x; if (!line[p] || used[p]) continue;
     let cy = y, cx = x, gap = 0, sx = 0, n = 0;
@@ -1493,18 +1494,22 @@ function selectionEdges(bmp) {
       if (nx < 0) { if (++gap > 4) break; continue; }
       gap = 0; cx = nx;
     }
-    if (cy - y >= minLen) keys.add(Math.round(sx / n / 12) + ":" + Math.round(y / 30));
+    if (cy - y >= minLen) keys.add(Math.round(sx / n / (W / 200)) + ":" + Math.round((y + cy) / 2 / (H / 18)));
   }
   return keys.size;
 }
 async function frameTooltip(bmp, shot, fs, at) {
   const line = findTooltipLine(bmp);
   // Mode « au clic » : on lit seulement quand une caisse vient d'être sélectionnée (nouveau cadre clair).
+  // Le jeu masque l'infobulle au moment du clic : après une nouvelle sélection, on attend qu'elle s'affiche (4 s au plus).
   if (ocrTrigger() === "click") {
     const edges = selectionEdges(bmp);
-    if (fs.edges == null || edges < fs.edges) fs.edges = edges;
-    if (!line || edges < fs.edges + 2) return null;
-    fs.edges = edges;
+    if (fs.edges == null || edges < fs.edges) fs.edges = edges;          // départ ou désélection
+    else if (edges >= fs.edges + 2) { fs.edges = edges; fs.pending = at + 4000; fs.clicks = (fs.clicks || 0) + 1; }
+    if (!fs.pending) return null;
+    if (at > fs.pending) { fs.pending = 0; fs.missed = (fs.missed || 0) + 1; return { added: false, missed: true }; }
+    if (!line) return null;
+    fs.pending = 0;
     const r = await readTooltipBitmap(bmp, line, false);
     if (!r) return { added: false };
     const prevRead = ocr.last;
@@ -1543,7 +1548,7 @@ async function startLive() {
   live.stream.getVideoTracks()[0].addEventListener("ended", stopLive);
   ocrMsg("Lecture en direct : survole chaque caisse jusqu'à l'apparition de son infobulle. Préparation…");
   await ocrWorker().catch(err => ocrMsg(errText(err), true));
-  ocrMsg(ocrTrigger() === "click" ? "Lecture en direct active : clique sur chaque caisse dans le jeu (elle est lue quand elle est sélectionnée), puis clique sur « Arrêter »." : "Lecture en direct active : pose la souris sur chaque caisse environ une seconde (le passage d'une caisse à l'autre est ignoré), puis clique sur « Arrêter ».");
+  ocrMsg(ocrTrigger() === "click" ? "Lecture en direct active : clique sur chaque caisse et laisse la souris dessus jusqu'à l'apparition de son infobulle, puis passe à la suivante. Clique sur « Arrêter » à la fin." : "Lecture en direct active : pose la souris sur chaque caisse environ une seconde (le passage d'une caisse à l'autre est ignoré), puis clique sur « Arrêter ».");
   live.timer = setInterval(liveTick, 300);
 }
 // Image quasi uniformément noire (moyenne et écart très faibles), mesurée sur une version réduite.
@@ -1575,6 +1580,7 @@ async function liveTick() {
     if (live.fs.prevLine) live.seen = (live.seen || 0) + 1;
     bmp.close && bmp.close();
     if (!live.n && live.frames === 40) ocrMsg(`Aucune infobulle détectée pour l'instant (image reçue : ${live.lastBmp.width}×${live.lastBmp.height}${live.seen ? `, ${live.seen} étiquette(s) repérée(s) mais illisible(s)` : ", étiquette violette du nom jamais repérée"}). Survole une caisse jusqu'à voir son infobulle, puis clique sur « Envoyer l'image vue » et transmets-moi le fichier.`, true);
+    if (got && got.missed) ocrMsg(`Caisse sélectionnée mais aucune infobulle vue : après le clic, laisse la souris sur la caisse jusqu'à ce que son infobulle apparaisse. (${live.n} caisse${live.n > 1 ? "s" : ""} lue${live.n > 1 ? "s" : ""})`, true);
     if (got && got.added) { live.n++; live.shot.n = live.n; ocrMsg(`Lecture en direct : ${live.n} caisse${live.n > 1 ? "s" : ""} lue${live.n > 1 ? "s" : ""}. Continue, ou clique sur « Arrêter ».`); }
     if (st.items.filter(i => i.shot === live.shot.id).length >= VIDEO_MAX_READS) stopLive();
   } catch (err) { ocrMsg(errText(err), true); }
