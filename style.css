@@ -313,3 +313,5 @@ input.needqty{border-color:var(--warn);background:color-mix(in srgb,var(--warn) 
 .ocrlast.flash{animation:ocrflash 1.2s ease-out}
 @keyframes ocrflash{0%{background:color-mix(in srgb,var(--accent) 35%,var(--soft))}100%{background:var(--soft)}}
 @media (prefers-reduced-motion:reduce){.ocrlast.flash{animation:none}}
+/* Version du site, à la suite du titre */
+.appver{font-family:var(--f-mono, ui-monospace, monospace);font-size:13px;font-weight:600;letter-spacing:.04em;color:var(--muted, #6b7280);vertical-align:middle;margin-left:6px;white-space:nowrap}

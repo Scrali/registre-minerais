@@ -1918,13 +1918,25 @@ async function findSelCounters(bmp) {
   const c = document.createElement("canvas"); c.width = bmp.width * scale; c.height = top * scale;
   const g = c.getContext("2d"); g.drawImage(bmp, 0, 0, bmp.width, top, 0, 0, c.width, c.height);
   await w.setParameters({ tessedit_pageseg_mode: "11", tessedit_char_whitelist: "" });
-  const { data } = await w.recognize(c);
   const out = [];
-  for (const wd of data.words || []) {
+  const collect = words => { for (const wd of words || []) {
     if (!/S.?L.?CT.?ONN/i.test(wd.text || "") || /NER|TOUT/i.test(wd.text || "")) continue;   // pas les boutons « Tout sélectionner »
     const b = wd.bbox, h = (b.y1 - b.y0) / scale;
-    out.push({ x: Math.max(0, Math.round(b.x0 / scale - h * 0.3)), y: Math.max(0, Math.round(b.y0 / scale - h * 0.3)),
-               w: Math.round((b.x1 - b.x0) / scale + h * 5), h: Math.round(h * 1.6) });
+    const r = { x: Math.max(0, Math.round(b.x0 / scale - h * 0.3)), y: Math.max(0, Math.round(b.y0 / scale - h * 0.3)),
+                w: Math.round((b.x1 - b.x0) / scale + h * 5), h: Math.round(h * 1.6) };
+    if (!out.some(o => Math.abs(o.x - r.x) < h * 3 && Math.abs(o.y - r.y) < h * 2)) out.push(r);
+  } };
+  collect((await w.recognize(c)).data.words);
+  // Écran sombre, éclairage différent ou vu de biais : texte clair isolé en noir sur blanc, à plusieurs seuils.
+  if (!out.length) {
+    const g2 = c.getContext("2d", { willReadFrequently: true }), src = g2.getImageData(0, 0, c.width, c.height);
+    for (const thr of [140, 110, 170]) {
+      const im = new ImageData(new Uint8ClampedArray(src.data), c.width, c.height), d = im.data;
+      for (let i = 0; i < d.length; i += 4) { const l = Math.max(d[i], d[i + 1], d[i + 2]); d[i] = d[i + 1] = d[i + 2] = l > thr ? 0 : 255; }
+      g2.putImageData(im, 0, 0);
+      collect((await w.recognize(c)).data.words);
+      if (out.length >= 2) break;
+    }
   }
   return out;
 }
@@ -1942,13 +1954,15 @@ function counterCanvas(bmp, r, forSig, boost = 1) {
 }
 async function readSelCounter(bmp, r) {
   const w = await ocrWorker();
-  await w.setParameters({ tessedit_pageseg_mode: "7", tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÉéÈè:0123456789 " });
+  await w.setParameters({ tessedit_pageseg_mode: "6", tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÉéÈè:0123456789 " });
   // Deux lectures à deux tailles : la valeur n'est retenue que si elles concordent (la compression de l'image en 4K
   // fait parfois lire 28 au lieu de 23 ; une telle erreur ne doit jamais compter comme un clic).
   const vals = [];
   for (const boost of [1, 1.7]) {
     const { data } = await w.recognize(counterCanvas(bmp, r, false, boost));
-    const m = String(data.text || "").replace(/[Oo](?=\d|\s*$)/g, "0").match(/(\d{1,3})\s*$/);
+    // Première ligne seulement : vu de biais, la ligne « Capacité » du dessous entre parfois dans la zone.
+    const first = String(data.text || "").split(/\n/).map(t => t.trim()).find(t => /\S/.test(t)) || "";
+    const m = first.replace(/[Oo](?=\d|\s*$)/g, "0").match(/(\d{1,3})\s*$/);
     vals.push(m ? +m[1] : null);
   }
   return vals;
@@ -3199,3 +3213,6 @@ $("#rstGo").addEventListener("click", async () => {
   } catch (err) { m.textContent = errText(err); m.className = "formmsg err"; b.disabled = false; }
   b.classList.remove("armed"); b.textContent = "Tout effacer"; b.disabled = $("#rstConfirm").value.trim() !== "REINITIALISER";
 });
+// Version du site (celle des fichiers chargés), affichée à la suite du titre.
+(() => { const s = document.querySelector('script[src^="app.js"]'), v = s && s.src.split("v=")[1];
+  if (v) document.querySelectorAll(".appver").forEach(e => { e.textContent = "version " + v; }); })();
