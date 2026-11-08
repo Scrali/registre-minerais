@@ -1368,7 +1368,23 @@ function findTooltipLine(bmp) {
   const h0 = bot - top + 1, left = fx + Math.max(0, lft - 2), y = Math.max(0, fy + top - Math.round(h0 * 0.15));
   const height = Math.min(bmp.height - y, Math.round(h0 * 1.3) + 1);
   // La ligne s'étend jusqu'au contenu en SCU, aligné à droite de l'infobulle (mesuré : environ 230 px sur 2000).
-  const width = Math.min(bmp.width - left, Math.max(Math.round(h0 * 16), Math.round(bmp.width * 0.125)));
+  let width = Math.min(bmp.width - left, Math.max(Math.round(h0 * 16), Math.round(bmp.width * 0.125)));
+  // Fin de la ligne : bord droit de l'étiquette olive du contenu (« 0.115 SCU »). Ce qui suit gêne la lecture.
+  const o = document.createElement("canvas"); o.width = width; o.height = height;
+  const og = o.getContext("2d", { willReadFrequently: true }); og.drawImage(bmp, left, y, width, height, 0, 0, width, height);
+  const od = og.getImageData(0, 0, width, height).data; let lastOlive = -1;
+  for (let x = width - 1; x >= 0 && lastOlive < 0; x--) {
+    let n = 0;
+    for (let yy = 0; yy < height; yy++) {
+      const i = (yy * width + x) * 4, r = od[i], g2 = od[i + 1], b = od[i + 2], mx = Math.max(r, g2, b), mn = Math.min(r, g2, b);
+      if (mx < 82 || mx === mn) continue;   // étiquette olive mesurée : teinte 42-49°, saturation > 0,6, luminosité > 0,35
+      let hue = mx === r ? 60 * (((g2 - b) / (mx - mn)) % 6) : mx === g2 ? 60 * ((b - r) / (mx - mn) + 2) : 60 * ((r - g2) / (mx - mn) + 4);
+      if (hue < 0) hue += 360;
+      if (hue >= 40 && hue <= 60 && (mx - mn) / mx > 0.55) n++;
+    }
+    if (n >= Math.max(3, height * 0.3)) lastOlive = x;
+  }
+  if (lastOlive > h0 * 6) width = Math.min(width, lastOlive + Math.round(h0 * 0.4));
   return { x: left, y, w: width, h: height };
 }
 // Image préparée pour l'OCR : agrandie, en niveaux de gris, texte clair rendu foncé sur fond blanc.
@@ -1394,7 +1410,9 @@ async function readTooltipBitmap(bmp, line, fallback) {
   const w = await ocrWorker();
   let found = null, proof = null;
   if (line) {
-    await w.setParameters({ tessedit_pageseg_mode: "7" });
+    // Une seule ligne ; seulement les caractères possibles d'une infobulle (lettres, chiffres, unités).
+    await w.setParameters({ tessedit_pageseg_mode: "7",
+      tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÀÂÄÇÉÈÊËÎÏÔÖÙÛÜàâäçéèêëîïôöùûüŒœ0123456789.,()[]'µ -" });
     const scale = Math.max(3, Math.min(8, 60 / line.h));   // texte d'environ 40 px de haut pour l'OCR
     const { data } = await w.recognize(ocrCanvas(bmp, line, scale));
     found = OcrLogic.parseTooltip(data.text);
@@ -1405,7 +1423,7 @@ async function readTooltipBitmap(bmp, line, fallback) {
   }
   if (!found && fallback) {
     // Repli : toute l'image (plus lent), lecture des blocs de texte épars.
-    await w.setParameters({ tessedit_pageseg_mode: "11" });
+    await w.setParameters({ tessedit_pageseg_mode: "11", tessedit_char_whitelist: "" });
     const { data } = await w.recognize(ocrCanvas(bmp, { x: 0, y: 0, w: bmp.width, h: bmp.height }, Math.min(2, 2600 / bmp.width)));
     found = OcrLogic.parseTooltip(data.text);
     if (found) found.confidence = Math.min(0.6, (data.confidence || 0) / 100);
@@ -1518,10 +1536,17 @@ async function frameTooltip(bmp, shot, fs, at) {
     const edges = selectionEdges(bmp);
     if (fs.edges == null || edges < fs.edges) fs.edges = edges;          // départ ou désélection
     else if (edges >= fs.edges + 2) { fs.edges = edges; fs.pending = at + 4000; fs.clicks = (fs.clicks || 0) + 1; }
+    const sigNow = line ? lineSig(bmp, line) : "";
+    const sameAs = (a, sa) => !!(line && a && Math.abs(line.x - a.x) + Math.abs(line.y - a.y) <= 12 && sigDiff(sigNow, sa) <= 0.08);
+    // Stabilité : même infobulle que l'image précédente.
+    const steady = sameAs(fs.prevLine, fs.prevSig);
+    fs.prevLine = line; fs.prevSig = sigNow;
     if (!fs.pending) return null;
     if (at > fs.pending) { fs.pending = 0; fs.missed = (fs.missed || 0) + 1; return { added: false, missed: true }; }
-    if (!line) return null;
-    fs.pending = 0;
+    // Après un clic, l'infobulle de la caisse précédente reste parfois affichée un instant : on attend une infobulle
+    // différente de la dernière lue, immobile sur deux images de suite.
+    if (!line || !steady || sameAs(fs.lastLine, fs.lastSig)) return null;
+    fs.pending = 0; fs.lastLine = line; fs.lastSig = sigNow;
     const r = await readTooltipBitmap(bmp, line, false);
     if (!r) return { added: false };
     const prevRead = ocr.last;
