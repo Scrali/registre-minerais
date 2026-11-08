@@ -1290,7 +1290,7 @@ function renderReview() {
       <td><input type="text" data-f="name" id="rv-name-${i}" value="${esc(it.name)}">${warn.length ? `<div class="warns">${warn.join(" ")}</div>` : ""}</td>
       <td class="rv-case">${pic}${extra}</td>
       <td><input type="number" class="qin" step="1" min="0" max="1000" placeholder="?" data-f="quality" id="rv-q-${i}" value="${esc(it.quality)}" aria-label="Qualité"></td>
-      <td><input type="number" step="any" min="0" data-f="qty" id="rv-qty-${i}" value="${it.qty}" aria-label="Quantité"${it.needQty && !(num(it.qty) > 0) ? ' class="needqty" placeholder="SCU ?" title="Contenu de la caisse : survole-la dans le jeu et recopie la valeur en SCU"' : ""}>${it.needQty && !(num(it.qty) > 0) ? '<div class="colordesc">contenu à saisir (survol en jeu)</div>' : ""}</td>
+      <td><input type="number" step="any" min="0" data-f="qty" id="rv-qty-${i}" value="${it.qty}" aria-label="Quantité"${it.needQty && !(num(it.qty) > 0) ? (it.unit ? ' class="needqty" placeholder="SCU ?" title="Contenu de la caisse : survole-la dans le jeu et recopie la valeur en SCU"' : ' class="needqty" placeholder="nombre ?" title="Nombre de gemmes : la valeur « x1 », « x5 »… affichée sur la case"') : ""}>${it.needQty && !(num(it.qty) > 0) ? `<div class="colordesc">${it.unit ? "contenu à saisir (survol en jeu)" : "nombre affiché sur la case (x1, x5…)"}</div>` : ""}</td>
       <td><input type="text" class="uin" data-f="unit" id="rv-unit-${i}" list="unitList" maxlength="20" placeholder="objets" value="${esc(it.unit)}" aria-label="Unité"></td>
       <td><select data-f="target" id="rv-target-${i}"><option value="new"${it.target === "new" ? " selected" : ""}>Nouvelle ressource (ajoutée au catalogue)</option>${opts.map(o => `<option value="${esc(o.id)}"${o.id === it.target ? " selected" : ""}>${esc(o.name)}</option>`).join("")}</select></td></tr>`);
     }
@@ -1408,6 +1408,13 @@ async function readTooltipBitmap(bmp, line, fallback) {
   return found ? { ...found, proof } : null;
 }
 const ocrShots = () => st.shots.filter(s => s.ocr);
+// Gemmes et objets (Hadanite, Dolivine…) : comptés en unités, jamais en SCU.
+const GEM_NAMES = ["aphorite", "beradom", "carinite", "dolivine", "feynmaline", "glacosite", "hadanite", "janalite", "sadaryx", "saldynium", "yormandieye", "oeildeyormandi"];
+function isGem(target, name) {
+  const r = resOf(target);
+  if (r && /objet|gemme/i.test(r.category || "")) return true;
+  return [name, r && r.name, r && r.name_en].filter(Boolean).some(n => GEM_NAMES.includes(norm(String(n).replace(/\s*[([].*$/, ""))));
+}
 // Ajoute une caisse lue à la liste à vérifier. Même caisse lue deux fois de suite : décochée (doublon probable).
 function pushOcrItem(r, s, at, windowMs) {
   const name = r.name.replace(/\s*\((?:M|Ore|Raw)\)\s*$/i, "").trim();
@@ -1415,6 +1422,8 @@ function pushOcrItem(r, s, at, windowMs) {
     shot: s.id, crop: null, proof: r.proof, box: null, confidence: r.confidence ?? null, group: norm(name), ocr: true };
   const prev = st.items.find(x => x.group === it.group);
   if (prev) { it.name = prev.name; it.target = prev.target; }
+  // Gemme : l'infobulle donne un volume, pas un nombre. Le nombre (x1, x5…) affiché sur la case est à saisir.
+  if (isGem(it.target, name)) { it.unit = ""; it.qty = ""; it.needQty = true; it.gem = true; }
   const read = { name, quality: r.quality, qty: r.qty, at };
   if (OcrLogic.sameRead(ocr.last, read, windowMs)) { it.on = false; it.dup = true; }
   ocr.last = read;
@@ -1452,12 +1461,17 @@ async function ocrVideo(file) {
 }
 // Une image (vidéo ou direct) : lit l'infobulle seulement si elle vient d'apparaître, a bougé (autre caisse) ou a changé.
 // Renvoie null si rien de nouveau, sinon { added } (false si c'est la même caisse que la précédente).
+// Une infobulle n'est lue que lorsqu'elle est restée immobile et identique pendant STABLE_MS (la souris s'est posée
+// sur la caisse) : les caisses survolées en passant sont ignorées. Elle n'est relue que si elle change ou disparaît.
+const STABLE_MS = 700;
 async function frameTooltip(bmp, shot, fs, at) {
   const line = findTooltipLine(bmp);
   const sig = line ? lineSig(bmp, line) : "";
-  const fresh = line && (!fs.prevLine || Math.abs(line.x - fs.prevLine.x) + Math.abs(line.y - fs.prevLine.y) > 24 || sigDiff(sig, fs.prevSig) > 0.12);
+  const same = line && fs.prevLine && Math.abs(line.x - fs.prevLine.x) + Math.abs(line.y - fs.prevLine.y) <= 12 && sigDiff(sig, fs.prevSig) <= 0.08;
+  if (!same) { fs.since = at; fs.done = false; }
   fs.prevLine = line; fs.prevSig = sig;
-  if (!fresh) return null;
+  if (!line || fs.done || at - fs.since < STABLE_MS) return null;
+  fs.done = true;
   const r = await readTooltipBitmap(bmp, line, false);
   if (!r || (ocr.last && ocr.last.video === shot.id && OcrLogic.sameRead(ocr.last, { ...r, at }, 1e9))) return { added: false };
   pushOcrItem(r, shot, at, 1e9); ocr.last.video = shot.id;
@@ -1481,7 +1495,7 @@ async function startLive() {
   live.stream.getVideoTracks()[0].addEventListener("ended", stopLive);
   ocrMsg("Lecture en direct : survole chaque caisse jusqu'à l'apparition de son infobulle. Préparation…");
   await ocrWorker().catch(err => ocrMsg(errText(err), true));
-  ocrMsg("Lecture en direct active : survole chaque caisse environ une seconde, puis clique sur « Arrêter ».");
+  ocrMsg("Lecture en direct active : pose la souris sur chaque caisse environ une seconde (le passage d'une caisse à l'autre est ignoré), puis clique sur « Arrêter ».");
   live.timer = setInterval(liveTick, 300);
 }
 // Image quasi uniformément noire (moyenne et écart très faibles), mesurée sur une version réduite.
@@ -1709,7 +1723,7 @@ $("#compare").addEventListener("click", async () => {
     return setMsg("#compareMsg", "Pour un inventaire complet, toutes les pages doivent être analysées sans erreur.", true);
   if (st.items.some(it => it.on && !it.name.trim())) return setMsg("#compareMsg", "Chaque ligne cochée doit avoir un nom.", true);
   const empty = st.items.filter(it => it.on && it.needQty && !(num(it.qty) > 0)).length;
-  if (empty) return setMsg("#compareMsg", `${empty} caisse${empty > 1 ? "s" : ""} de minerai sans quantité : survole chaque caisse dans le jeu et recopie son contenu en SCU (ou décoche la ligne).`, true);
+  if (empty) return setMsg("#compareMsg", `${empty} ligne${empty > 1 ? "s" : ""} sans quantité : contenu en SCU d'une caisse (au survol en jeu) ou nombre de gemmes affiché sur la case (x1, x5…). Remplis-les ou décoche-les.`, true);
   $("#compare").disabled = true; setMsg("#compareMsg", "Comparaison avec le dernier relevé…");
   try {
     // Les nouvelles ressources rejoignent d'abord le catalogue (sans aucun stock).
