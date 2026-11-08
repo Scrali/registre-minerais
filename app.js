@@ -1582,13 +1582,15 @@ function counterCanvas(bmp, r, forSig, boost = 1) {
 async function readSelCounter(bmp, r) {
   const w = await ocrWorker();
   await w.setParameters({ tessedit_pageseg_mode: "7", tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÉéÈè:0123456789 " });
-  // Deux tailles si besoin : la netteté du texte varie selon la résolution partagée (2K, 4K…).
+  // Deux lectures à deux tailles : la valeur n'est retenue que si elles concordent (la compression de l'image en 4K
+  // fait parfois lire 28 au lieu de 23 ; une telle erreur ne doit jamais compter comme un clic).
+  const vals = [];
   for (const boost of [1, 1.7]) {
     const { data } = await w.recognize(counterCanvas(bmp, r, false, boost));
     const m = String(data.text || "").replace(/[Oo](?=\d|\s*$)/g, "0").match(/(\d{1,3})\s*$/);
-    if (m) return +m[1];
+    vals.push(m ? +m[1] : null);
   }
-  return null;
+  return vals;
 }
 async function frameTooltip(bmp, shot, fs, at) {
   const line = findTooltipLine(bmp);
@@ -1616,8 +1618,11 @@ async function frameTooltip(bmp, shot, fs, at) {
         const sig = counterCanvas(bmp, c.r, true);
         if (sig === c.sig) continue;
         c.sig = sig;
-        const n = await readSelCounter(bmp, c.r);
-        olog(`compteur ${c.r.x},${c.r.y} : ${c.n ?? "?"} -> ${n ?? "illisible"}`);
+        // Valeur retenue : confirmée par les deux lectures, ou lue une seule fois si c'est une hausse plausible (+1 à +3).
+        const [v1, v2] = await readSelCounter(bmp, c.r);
+        const one = v1 ?? v2, plausible = v => v != null && c.n != null && v > c.n && v <= c.n + 3;
+        const n = v1 != null && v1 === v2 ? v1 : (v1 == null) !== (v2 == null) && (plausible(one) || c.n == null) ? one : null;
+        olog(`compteur ${c.r.x},${c.r.y} : ${c.n ?? "?"} -> ${n ?? `ignoré (${v1 ?? "?"}/${v2 ?? "?"})`}`);
         if (n == null) continue;
         if (c.n != null && n > c.n) { fs.pending = at + 4000; fs.diag.clicks++; olog("clic repéré : attente de l'infobulle"); }
         c.n = n;
