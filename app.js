@@ -1537,13 +1537,16 @@ async function frameTooltip(bmp, shot, fs, at) {
   // Le jeu masque l'infobulle au moment du clic : après une nouvelle sélection, on attend qu'elle s'affiche (4 s au plus).
   if (ocrTrigger() === "click") {
     const edgeMap = selectionEdges(bmp), edges = edgeMap.size;
+    fs.diag = fs.diag || { frames: 0, maxEdges: 0, clicks: 0, tips: 0 };
+    fs.diag.frames++; fs.diag.edges = edges; fs.diag.maxEdges = Math.max(fs.diag.maxEdges, edges); if (line) fs.diag.tips++;
+    fs.lastEdgeMap = edgeMap; fs.lastLineSeen = line;
     if (fs.edges == null || edges < fs.edges) { fs.edges = edges; fs.edgeKeys = new Set(edgeMap.keys()); }   // départ ou désélection
     else if (edges >= fs.edges + 2) {
       // Carré de la caisse qui vient d'être sélectionnée : entre ses deux nouveaux bords.
       const fresh = [...edgeMap].filter(([k]) => !(fs.edgeKeys || new Set()).has(k)).map(([, v]) => v);
       fs.square = fresh.length >= 2 ? { x0: Math.min(...fresh.map(e => e.x)), x1: Math.max(...fresh.map(e => e.x)),
         y0: Math.min(...fresh.map(e => e.y0)), y1: Math.max(...fresh.map(e => e.y1)) } : null;
-      fs.edges = edges; fs.edgeKeys = new Set(edgeMap.keys()); fs.pending = at + 4000; fs.clicks = (fs.clicks || 0) + 1;
+      fs.edges = edges; fs.edgeKeys = new Set(edgeMap.keys()); fs.pending = at + 4000; fs.clicks = (fs.clicks || 0) + 1; fs.diag.clicks++;
     }
     const sigNow = line ? lineSig(bmp, line) : "";
     const sameAs = (a, sa) => !!(line && a && Math.abs(line.x - a.x) + Math.abs(line.y - a.y) <= 12 && sigDiff(sigNow, sa) <= 0.08);
@@ -1555,12 +1558,7 @@ async function frameTooltip(bmp, shot, fs, at) {
     // Après un clic, l'infobulle de la caisse précédente reste parfois affichée un instant : on attend une infobulle
     // différente de la dernière lue, immobile sur deux images de suite.
     if (!line || !steady || sameAs(fs.lastLine, fs.lastSig)) return null;
-    // L'infobulle doit appartenir au carré sélectionné : elle s'affiche contre la caisse survolée (au clic).
-    if (fs.square) {
-      const W = bmp.width, H = bmp.height, q = fs.square;
-      const near = line.x >= q.x0 - W * 0.06 && line.x <= q.x1 + W * 0.12 && line.y >= q.y0 - H * 0.03 && line.y <= q.y1 + H * 0.12;
-      if (!near) return null;
-    }
+    // (Pas de contrôle de position : au clic, l'infobulle affichée est celle de la caisse survolée, donc cliquée.)
     fs.pending = 0; fs.lastLine = line; fs.lastSig = sigNow;
     const r = await readTooltipBitmap(bmp, line, false);
     if (!r) return { added: false };
@@ -1631,6 +1629,9 @@ async function liveTick() {
     const got = await frameTooltip(bmp, live.shot, live.fs, Date.now());
     if (live.fs.prevLine) live.seen = (live.seen || 0) + 1;
     bmp.close && bmp.close();
+    const dg = live.fs.diag;
+    if (dg && ocrTrigger() === "click" && live.frames % 10 === 0)
+      $("#ocrDiagLine").textContent = `Images reçues : ${dg.frames} (${live.lastBmp.width}×${live.lastBmp.height}) · bords de carrés visibles : ${dg.edges} · clics repérés : ${dg.clicks} · infobulles vues : ${dg.tips} · caisses lues : ${live.n}`;
     if (!live.n && live.frames === 40) ocrMsg(`Aucune infobulle détectée pour l'instant (image reçue : ${live.lastBmp.width}×${live.lastBmp.height}${live.seen ? `, ${live.seen} étiquette(s) repérée(s) mais illisible(s)` : ", étiquette violette du nom jamais repérée"}). Survole une caisse jusqu'à voir son infobulle, puis clique sur « Envoyer l'image vue » et transmets-moi le fichier.`, true);
     if (got && got.missed) ocrMsg(`Caisse sélectionnée mais aucune infobulle vue : après le clic, laisse la souris sur la caisse jusqu'à ce que son infobulle apparaisse. (${live.n} caisse${live.n > 1 ? "s" : ""} lue${live.n > 1 ? "s" : ""})`, true);
     if (got && got.added) { live.n++; live.shot.n = live.n; ocrMsg(`Lecture en direct : ${live.n} caisse${live.n > 1 ? "s" : ""} lue${live.n > 1 ? "s" : ""}. Continue, ou clique sur « Arrêter ».`); }
@@ -1656,6 +1657,9 @@ $("#ocrDiag").addEventListener("click", () => {
   const g = c.getContext("2d"); g.drawImage(b, 0, 0);
   const r = findTooltipLine(b);
   if (r) { g.strokeStyle = "#00ff00"; g.lineWidth = 3; g.strokeRect(r.x, r.y, r.w, r.h); }
+  // Bords de carrés de sélection repérés (rouge).
+  g.strokeStyle = "#ff2020"; g.lineWidth = 3;
+  for (const e of selectionEdges(b).values()) { g.beginPath(); g.moveTo(e.x, e.y0); g.lineTo(e.x, e.y1); g.stroke(); }
   c.toBlob(blob => { const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `image-vue-par-le-site-${Date.now()}.png`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); }, "image/png");
   ocrMsg(`Image téléchargée (${b.width}×${b.height}${r ? ", zone repérée encadrée en vert" : ", aucune zone repérée"}). Envoie-la-moi en pièce jointe.`);
 });
