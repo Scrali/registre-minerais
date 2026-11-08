@@ -1497,6 +1497,7 @@ async function readGemCount(bmp, line) {
   }
   // Plusieurs lectures : on garde le nombre lu en majorité. Sans majorité nette, rien n'est inventé (nombre à saisir).
   const n = v => votes.filter(x => x === v).length, best = votes.slice().sort((a, b) => n(b) - n(a))[0];
+  olog(`gemme : ${cands.length} étiquette(s) « X N » trouvée(s)${cands.length ? ` (1re : ${cands[0].x},${cands[0].y} ${cands[0].w}×${cands[0].h})` : ""} · lectures : ${votes.join(", ") || "aucune"} · zone ${rx},${ry} ${rw}×${rh}`);
   return best != null && n(best) * 2 > votes.length ? best : null;
 }
 async function readTooltip(file) {
