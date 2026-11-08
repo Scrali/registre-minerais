@@ -1369,7 +1369,10 @@ function findTooltipLine(bmp) {
     if (bh < 3 || bh > maxH || bw < bh * 2 || bw > w * 0.15 || n / (bw * bh) < 0.35) continue;
     let olive = 0;
     for (let y = y0; y <= y1; y++) for (let x = x1 + 1; x < Math.min(w, x1 + bh * 16); x++) if (isOlive(d, (y * w + x) * 4)) olive++;
-    const score = (olive >= bh * 2 ? 1e6 : 0) + n;
+    // Sans étiquette olive du contenu juste à droite, ce n'est pas une infobulle (ex. : cristal violet d'une gemme
+    // coupé en bas de la liste, qui a la forme d'une étiquette). Mesuré : toutes les vraies infobulles l'ont.
+    if (olive < bh * 2) continue;
+    const score = n;
     if (!best || score > best.score) best = { score, x0, x1, y0, y1 };
   }
   if (!best) return null;
@@ -1823,10 +1826,11 @@ async function frameTooltip(bmp, shot, fs, at) {
       }
       const sameAsLast = line && fs.lastLine && Math.abs(line.x - fs.lastLine.x) + Math.abs(line.y - fs.lastLine.y) <= 12 && sigDiff(sigNow, fs.lastSig) <= 0.08;
       if (!line || (sameAsLast && !onClick)) return null;
-      fs.pending = 0; fs.lastLine = line; fs.lastSig = sigNow;
       const r = await readTooltipBitmap(bmp, line, false);
-      olog(r ? `infobulle lue : ${r.line}` : `infobulle vue en ${line.x},${line.y} mais texte illisible`);
-      if (!r) return { added: false };
+      olog(r ? `infobulle lue : ${r.line}` : `infobulle vue en ${line.x},${line.y} mais texte illisible : nouvel essai sur l'image suivante`);
+      // Illisible : le clic reste en attente (4 s au plus), l'image suivante est relue.
+      if (!r) return null;
+      fs.pending = 0; fs.lastLine = line; fs.lastSig = sigNow;
       const prevRead = ocr.last, it = pushOcrItem(r, shot, at, 0); ocr.last.video = shot.id;
       if (prevRead && OcrLogic.sameRead(prevRead, ocr.last, 1e9)) it.same = true;
       st.items.sort((a, b) => shotPage(a.shot) - shotPage(b.shot)); renderReview();

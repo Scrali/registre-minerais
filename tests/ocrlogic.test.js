@@ -20,6 +20,7 @@ test("Variantes de lecture OCR : séparateurs, virgule, O pour 0, anglais, accen
   assert.equal(parseTooltip("Pressurized Ice (M) 300 1.2 SCU").name, "Pressurized Ice");
   assert.equal(parseTooltip("Fer 32s 1 SCU").quality, 325, "s lu à la place d'un 5 en fin de qualité");
   assert.deepEqual([parseTooltip("Sadaryx 258 0 001 SCu").quality, parseTooltip("Sadaryx 258 0 001 SCu").qty], [258, 0.001], "point décimal perdu");
+  assert.equal(parseTooltip("Aphorite 686 0.001 SCY").qty, 0.001, "U lu Y");
 });
 
 test("Textes qui ne sont pas une infobulle de contenu : ignorés", () => {
