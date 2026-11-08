@@ -1019,7 +1019,8 @@ function addImages(files) {
   if (imgs.length > room) capMsg(`${MAX_SHOTS} captures au maximum à la fois : enregistre celles-ci, puis continue.`, true);
   else capMsg(p > 1 ? `${p} captures prêtes. Colle la page suivante ou lance l'analyse.` : "Capture prête. Colle la page suivante si l'inventaire en a plusieurs, ou lance l'analyse.");
 }
-const pendingShots = () => st.shots.filter(s => s.status === "new" || s.status === "error");
+// Captures (images) à analyser. Une vidéo ou une lecture en direct n'est jamais envoyée à l'analyse par image.
+const pendingShots = () => st.shots.filter(s => (s.status === "new" || s.status === "error") && s.file && !s.video);
 const shotPage = id => st.shots.findIndex(s => s.id === id) + 1;
 function renderShots() {
   const has = st.shots.length > 0;
@@ -1480,7 +1481,8 @@ function stopLive() {
   clearInterval(live.timer); live.timer = null;
   if (live.stream) live.stream.getTracks().forEach(t => t.stop());
   live.stream = null; live.video = null;
-  if (live.shot) { live.shot.status = live.n ? "done" : "error"; if (!live.n) live.shot.err = "Aucune infobulle lue."; }
+  // Aucune caisse lue : la lecture ne reste pas dans la liste des captures.
+  if (live.shot) { if (live.n) live.shot.status = "done"; else st.shots = st.shots.filter(x => x !== live.shot); }
   $("#ocrLive").hidden = false; $("#ocrLiveStop").hidden = true; renderShots();
   if (live.shot) ocrMsg(live.n ? `Lecture terminée : ${live.n} caisse${live.n > 1 ? "s" : ""}. Vérifie les valeurs dans le tableau avant d'enregistrer.` : "Lecture arrêtée : aucune infobulle lue.", !live.n);
   live.shot = null;
