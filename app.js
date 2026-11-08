@@ -1372,6 +1372,11 @@ function findTooltipLine(bmp) {
     // Sans étiquette olive du contenu juste à droite, ce n'est pas une infobulle (ex. : cristal violet d'une gemme
     // coupé en bas de la liste, qui a la forme d'une étiquette). Mesuré : toutes les vraies infobulles l'ont.
     if (olive < bh * 2) continue;
+    // L'étiquette du nom contient le nom écrit en blanc ; un cristal violet coupé en bas de la liste, non.
+    let white = 0;
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) { const i = (y * w + x) * 4, mx = Math.max(d[i], d[i + 1], d[i + 2]), mn = Math.min(d[i], d[i + 1], d[i + 2]);
+      if (0.3 * d[i] + 0.59 * d[i + 1] + 0.11 * d[i + 2] > 140 && (mx - mn) / (mx || 1) < 0.35) white++; }
+    if (white < bw * bh * 0.03) continue;
     const score = n;
     if (!best || score > best.score) best = { score, x0, x1, y0, y1 };
   }
@@ -1898,6 +1903,7 @@ async function liveTick() {
     // Dernière image gardée pour le diagnostic (sans copie) ; la précédente est libérée.
     const oldLast = live.lastBmp; live.lastBmp = bmp; dropFrame(live.fs, oldLast);
     const got = await frameTooltip(bmp, live.shot, live.fs, Date.now());
+    if (!live.shot) { live.busy = false; return; }   // « Arrêter » cliqué pendant la lecture de cette image
     if (live.fs.prevLine) live.seen = (live.seen || 0) + 1;
     const dg = live.fs.diag;
     if (dg && ocrTrigger() === "click" && live.frames % 10 === 0)
