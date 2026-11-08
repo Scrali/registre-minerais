@@ -1420,16 +1420,87 @@ function ocrCanvas(bmp, r, scale) {
 }
 // Gemmes : le nombre est le « X N » en haut à droite de la case survolée. L'infobulle s'ouvre au curseur, donc ce coin
 // est juste au-dessus et à droite du coin haut-gauche de l'infobulle. On garde le premier « X N » à droite du curseur.
+// Chiffres d'une étiquette « X N » : texte foncé (sous le seuil) qui ne touche pas le bord (le bord sombre autour des
+// coins arrondis est du fond). Renvoie les caractères de gauche à droite, sans le premier (« X »).
+function gemGlyphs(bmp, cb, off) {
+  const scale = Math.max(2, Math.min(10, 80 / cb.h)), cw = Math.round(cb.w * scale), ch = Math.round(cb.h * scale);
+  const c = document.createElement("canvas"); c.width = cw; c.height = ch;
+  const g = c.getContext("2d", { willReadFrequently: true }); g.imageSmoothingEnabled = true; g.drawImage(bmp, cb.x, cb.y, cb.w, cb.h, 0, 0, cw, ch);
+  const d = g.getImageData(0, 0, cw, ch).data, L = new Float32Array(cw * ch);
+  for (let p = 0; p < cw * ch; p++) L[p] = 0.3 * d[p * 4] + 0.59 * d[p * 4 + 1] + 0.11 * d[p * 4 + 2];
+  // Seuil sur le fond clair de l'étiquette (centre), pas sur les coins sombres.
+  let cs = 0, cn = 0;
+  for (let y = Math.round(ch * 0.2); y < ch * 0.8; y++) for (let x = Math.round(cw * 0.1); x < cw * 0.9; x++) { cs += L[y * cw + x]; cn++; }
+  const thr = cs / cn - off, dark = new Uint8Array(cw * ch);
+  for (let p = 0; p < cw * ch; p++) if (L[p] < thr) dark[p] = 1;
+  const stack = new Int32Array(cw * ch), comps = [];
+  for (let p0 = 0; p0 < cw * ch; p0++) {
+    if (dark[p0] !== 1) continue;
+    let sp = 0, x0 = cw, x1 = 0, y0 = ch, y1 = 0, edge = false; const px = []; stack[sp++] = p0; dark[p0] = 2;
+    while (sp) { const p = stack[--sp], x = p % cw, y = (p - x) / cw; px.push(p);
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+      if (x === 0 || y === 0 || x === cw - 1 || y === ch - 1) edge = true;
+      for (const q of [x > 0 ? p - 1 : -1, x < cw - 1 ? p + 1 : -1, y > 0 ? p - cw : -1, y < ch - 1 ? p + cw : -1]) if (q >= 0 && dark[q] === 1) { dark[q] = 2; stack[sp++] = q; } }
+    if (edge || y1 - y0 + 1 < ch * 0.3 || px.length < ch * 0.5) continue;
+    comps.push({ x0, x1, y0, y1, px });
+  }
+  comps.sort((a, b) => a.x0 - b.x0);
+  // Morceaux d'un même caractère (largement superposés en x) : regroupés.
+  const glyphs = [];
+  for (const k of comps) { const last = glyphs[glyphs.length - 1];
+    if (last && k.x0 < last.x1 - (k.x1 - k.x0) * 0.5) { last.x1 = Math.max(last.x1, k.x1); last.y0 = Math.min(last.y0, k.y0); last.y1 = Math.max(last.y1, k.y1); last.px.push(...k.px); }
+    else glyphs.push({ ...k, px: k.px.slice() }); }
+  if (glyphs.length < 2 || glyphs.length > 4) return null;
+  return { cw, digits: glyphs.slice(1) };
+}
+// Caractère réduit à une grille 8×12 (part de pixels foncés par case) et son rapport largeur / hauteur.
+function glyphGrid(k, cw) {
+  const gw = 8, gh = 12, w = k.x1 - k.x0 + 1, h = k.y1 - k.y0 + 1, cnt = new Float32Array(gw * gh), tot = new Float32Array(gw * gh);
+  for (let y = k.y0; y <= k.y1; y++) for (let x = k.x0; x <= k.x1; x++) tot[Math.min(gh - 1, Math.floor((y - k.y0) * gh / h)) * gw + Math.min(gw - 1, Math.floor((x - k.x0) * gw / w))]++;
+  for (const p of k.px) { const x = p % cw, y = (p - x) / cw; cnt[Math.min(gh - 1, Math.floor((y - k.y0) * gh / h)) * gw + Math.min(gw - 1, Math.floor((x - k.x0) * gw / w))]++; }
+  return { aspect: w / h, grid: Array.from(cnt, (v, i) => tot[i] ? v / tot[i] : 0) };
+}
+// Chiffres de la police des étiquettes « X N » (mesurés sur des captures du jeu, 2K et 4K) : rapport largeur / hauteur
+// et grille 8×12 (0 = vide, f = plein). Le 0 n'a jamais été vu : il est laissé à Tesseract.
+const GEM_DIGITS = {
+  "1": [0.361, "aefed7207ceffe71018effa2001bffb30019ffd40006efe50005dff60004cef70003aef900029efc00017efe00003ad7"],
+  "2": [0.839, "7eeefe70fd867dd3a40006f3100006f300002de20017de6004cfa2005ed50000ad400022ac5223ab9fdcccff5cedcdd7"],
+  "3": [0.827, "18edcb20ceb9bed1e71116f4720002f6000017e3002acee1004cdef3000001b94200008dba2001be9ea88bf91afffd91"],
+  "4": [0.835, "0003cb10001bfe40005fff5001cebf6006e65f701da13f806f604eb0cf95aff6fffffffe5bbacff900001ce100000590"],
+  "5": [0.825, "9cdedd70fea89950e9100000da000000dfa887308eddeee2022226d8000001ac3300009d9b3013be6eb99beb1adeeec3"],
+  "6": [0.878, "5dcbcc71dd8779b3e8101392d6000020da111000cfdeeca0bfba9ae79d3112bc8b10009f6b2102ae4ea879da1bcbbdc3"],
+  "7": [0.789, "bedcdce8bddddffd13336df400003de000005f800001cf100003fb000009f300002ed000009f500000dd000000d60000"],
+  "8": [0.825, "2bddea40ada99dc2d91117e5b60003d68a2117d35feccee17fca9cf5ab1001bba900009e8b4213ad4fcaabe907dcfd91"],
+  "9": [0.832, "5deeee91dc988bf7e61003dbd50001cccb2115ec9fddcefd2abbacfd000002de110000be683223ce8ecbbcfc1bccdeb3"]
+};
+function classifyGlyph(k, cw) {
+  const s = glyphGrid(k, cw), r = [];
+  for (const [d, [a, enc]] of Object.entries(GEM_DIGITS)) { let t = 0; for (let i = 0; i < 96; i++) t += Math.abs(s.grid[i] - parseInt(enc[i], 16) / 15); r.push([d, t / 96 + Math.abs(s.aspect - a) * 0.5]); }
+  r.sort((a, b) => a[1] - b[1]);
+  return r[0][1] < 0.3 && r[1][1] - r[0][1] >= 0.03 ? r[0][0] : null;
+}
+// Caractères recopiés espacés sur fond blanc (repli : lecture par Tesseract).
+function glyphsCanvas(G) {
+  const digits = G.digits, cw = G.cw, gh = Math.max(...digits.map(k => k.y1 - k.y0 + 1)), gap = Math.round(gh * 0.45), pad = Math.round(gh * 0.5);
+  const ow = digits.reduce((t, k) => t + k.x1 - k.x0 + 1, 0) + gap * (digits.length - 1) + 2 * pad, oh = gh + 2 * pad;
+  const o = document.createElement("canvas"); o.width = ow; o.height = oh;
+  const og = o.getContext("2d"); og.fillStyle = "#fff"; og.fillRect(0, 0, ow, oh);
+  const oi = og.getImageData(0, 0, ow, oh), od = oi.data, top = Math.min(...digits.map(k => k.y0));
+  let ox = pad;
+  for (const k of digits) { for (const p of k.px) { const x = p % cw, y = (p - x) / cw, q = ((y - top + pad) * ow + (x - k.x0 + ox)) * 4; if (q >= 0 && q < od.length) od[q] = od[q + 1] = od[q + 2] = 0; } ox += k.x1 - k.x0 + 1 + gap; }
+  og.putImageData(oi, 0, 0);
+  return o;
+}
 async function readGemCount(bmp, line) {
   const W = bmp.width, H = bmp.height, cellW = W * 0.095, cellH = H * 0.16;
   const tipX = line.x - line.h * 0.8, tipY = line.y - line.h * 2.5;
-  const rx = Math.max(0, Math.round(tipX - cellW * 0.15)), ry = Math.max(0, Math.round(tipY - cellH * 1.1));
-  const rw = Math.min(W - rx, Math.round(cellW * 1.2)), rh = Math.min(H - ry, Math.round(cellH * 1.2));
+  const rx = Math.max(0, Math.round(tipX - cellW * 0.3)), ry = Math.max(0, Math.round(tipY - cellH * 1.3));
+  const rw = Math.min(W - rx, Math.round(cellW * 1.6)), rh = Math.min(H - ry, Math.round(cellH * 1.45));
   const c = document.createElement("canvas"); c.width = rw; c.height = rh;
   const g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(bmp, rx, ry, rw, rh, 0, 0, rw, rh);
   const d = g.getImageData(0, 0, rw, rh).data, light = new Uint8Array(rw * rh);
   for (let p = 0; p < rw * rh; p++) { const i = p * 4, mx = Math.max(d[i], d[i + 1], d[i + 2]), mn = Math.min(d[i], d[i + 1], d[i + 2]);
-    if (0.3 * d[i] + 0.59 * d[i + 1] + 0.11 * d[i + 2] > 135 && (mx - mn) / (mx || 1) < 0.4) light[p] = 1; }
+    if (0.3 * d[i] + 0.59 * d[i + 1] + 0.11 * d[i + 2] > 115 && (mx - mn) / (mx || 1) < 0.4) light[p] = 1; }
   const light0 = light.slice();
   // Les cadres des cases (longs traits fins) touchent parfois l'étiquette : on les efface avant de chercher.
   const longH = Math.round(cellW * 0.5), longV = Math.round(cellH * 0.3);
@@ -1463,37 +1534,45 @@ async function readGemCount(bmp, line) {
     } }
   const cands = [];
   for (const b of parts) {
-    if (b.w < cellW * 0.08 || b.h < cellH * 0.04 || b.w < b.h * 1.2 || b.n / (b.w * b.h) < 0.35) continue;
-    if (rx + b.x < tipX - cellW * 0.1) continue;
-    // Une étiquette est un fond clair plein : son pourtour est clair. Une icône (pictogramme clair sur fond sombre) non.
-    let edge = 0, tot = 0;
-    for (let x = b.x; x < b.x + b.w; x++) for (const y of [b.y + 1, b.y + b.h - 2]) { tot++; edge += light0[y * rw + x] ? 1 : 0; }
-    for (let y = b.y; y < b.y + b.h; y++) for (const x of [b.x + 1, b.x + b.w - 2]) { tot++; edge += light0[y * rw + x] ? 1 : 0; }
-    if (edge / tot < 0.6) continue;
+    // Taille d'une étiquette : environ 1,7 % de la hauteur de l'écran (mesuré en 2K et en 4K).
+    if (b.w < cellW * 0.08 || b.h < H * 0.011 || b.h > H * 0.026 || b.w < b.h * 1.2 || b.n / (b.w * b.h) < 0.35) continue;
+    // La case survolée contient la souris (≈ coin de l'infobulle) : son étiquette, en haut à droite, finit à droite
+    // de la souris et se trouve au-dessus d'elle.
+    if (rx + b.x + b.w < tipX - cellW * 0.05 || ry + b.y > tipY + cellH * 0.05) continue;
+    // Étiquette « X N » : vert pâle (case sélectionnée) ou gris terne (case non sélectionnée). Les chiffres de qualité
+    // (« 1000 Q »), les icônes et les textes sont blanc crème, plus clairs et plus rouges. Couleur moyenne des pixels clairs.
+    let sr = 0, sg = 0, sl = 0, nn = 0;
+    for (let y = b.y; y < b.y + b.h; y++) for (let x = b.x; x < b.x + b.w; x++) { const p = y * rw + x; if (!light0[p]) continue;
+      sr += d[p * 4]; sg += d[p * 4 + 1]; sl += 0.3 * d[p * 4] + 0.59 * d[p * 4 + 1] + 0.11 * d[p * 4 + 2]; nn++; }
+    if (!nn) continue;
+    const mint = (sg - sr) / nn >= 6, grey = sl / nn < 190 && b.n / (b.w * b.h) >= 0.5;
+    if (!mint && !grey) continue;
     cands.push({ x: rx + b.x, y: ry + b.y, w: b.w, h: b.h });
   }
-  cands.sort((a, b) => a.x - b.x);
+  // Étiquette de la case survolée : la rangée la plus proche au-dessus de la souris, puis la première à sa droite.
+  const rowY = Math.max(-1, ...cands.map(b => b.y));
+  const mine = cands.filter(b => b.y >= rowY - cellH * 0.35).sort((a, b) => (a.x + a.w) - (b.x + b.w));
+  cands.length = 0; cands.push(...mine);
   const w = await ocrWorker();
-  const votes = [];
-  for (const cb of cands.slice(0, 3)) {
-    // Texte foncé sur étiquette claire. Petite étiquette (1080p, 1440p) : plusieurs seuils et modes avant d'abandonner.
-    const scale = Math.max(3, Math.min(10, 64 / cb.h));
-    for (const off of [35, 20, 50]) for (const psm of ["7", "8"]) {
-      const cv = document.createElement("canvas");
-      cv.width = Math.round(cb.w * scale) + 30; cv.height = Math.round(cb.h * scale) + 30;
-      const cg = cv.getContext("2d", { willReadFrequently: true }); cg.fillStyle = "#fff"; cg.fillRect(0, 0, cv.width, cv.height);
-      cg.imageSmoothingEnabled = true; cg.drawImage(bmp, cb.x, cb.y, cb.w, cb.h, 15, 15, cv.width - 30, cv.height - 30);
-      const im = cg.getImageData(15, 15, cv.width - 30, cv.height - 30), dd = im.data; let sum = 0, cnt = 0;
-      for (let i = 0; i < dd.length; i += 4) { sum += 0.3 * dd[i] + 0.59 * dd[i + 1] + 0.11 * dd[i + 2]; cnt++; }
-      const thr = sum / cnt - off;
-      for (let i = 0; i < dd.length; i += 4) { const l = 0.3 * dd[i] + 0.59 * dd[i + 1] + 0.11 * dd[i + 2]; dd[i] = dd[i + 1] = dd[i + 2] = l < thr ? 0 : 255; }
-      cg.putImageData(im, 15, 15);
-      await w.setParameters({ tessedit_pageseg_mode: psm, tessedit_char_whitelist: "Xx0123456789 " });
-      const { data } = await w.recognize(cv);
-      const m = String(data.text || "").replace(/\s+/g, "").match(/^[xX]?(\d{1,3})$/);
-      if (m && +m[1] > 0) votes.push(+m[1]);
+  // Première étiquette (dans l'ordre ci-dessus) qui contient bien « X » suivi de 1 à 3 caractères.
+  const votes = [], cb = cands.find(b => [35, 20, 50].some(off => gemGlyphs(bmp, b, off)));
+  if (cb) {
+    // Texte foncé sur étiquette claire. Les caractères sont séparés puis recopiés espacés, sans le « X » : Tesseract
+    // lisait « 11 » (deux traits serrés) comme 1. Plusieurs seuils et modes ; on garde la lecture majoritaire.
+    for (const off of [35, 20, 50]) {
+      const G = gemGlyphs(bmp, cb, off);
+      if (!G) continue;
+      // Reconnaissance par la forme (police du jeu) : compte double. Tesseract en complément (et seul pour le 0).
+      const byShape = G.digits.map(k => classifyGlyph(k, G.cw));
+      if (byShape.every(Boolean) && +byShape.join("") > 0) votes.push(+byShape.join(""), +byShape.join(""));
+      const cv = glyphsCanvas(G); cv.glyphs = G.digits.length;
+      for (const psm of ["7", "8"]) {
+        await w.setParameters({ tessedit_pageseg_mode: psm, tessedit_char_whitelist: "0123456789" });
+        const { data } = await w.recognize(cv);
+        const m = String(data.text || "").replace(/\s+/g, "").match(/^(\d{1,3})$/);
+        if (m && +m[1] > 0 && m[1].length === cv.glyphs) votes.push(+m[1]);
+      }
     }
-    if (votes.length) break;
   }
   // Plusieurs lectures : on garde le nombre lu en majorité. Sans majorité nette, rien n'est inventé (nombre à saisir).
   const n = v => votes.filter(x => x === v).length, best = votes.slice().sort((a, b) => n(b) - n(a))[0];
@@ -1585,8 +1664,9 @@ async function ocrVideo(file) {
       if (!shot.url) { const c = document.createElement("canvas"); c.width = 320; c.height = Math.round(320 * bmp.height / bmp.width); c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height); shot.url = c.toDataURL("image/jpeg", 0.7); renderShots(); }
       const got = await frameTooltip(bmp, shot, fs, t * 1000);
       if (got) { reads++; if (got.added) { n++; shot.n = n; ocrMsg(`Vidéo : ${n} caisse${n > 1 ? "s" : ""} lue${n > 1 ? "s" : ""} (${Math.round(t)} s / ${Math.round(dur)} s)…`); } }
-      bmp.close && bmp.close();
+      dropFrame(fs, bmp);
     }
+    if (fs.tipBmp) { const b = fs.tipBmp; fs.tipBmp = null; dropFrame(fs, b); }
     shot.status = n ? "done" : "error"; shot.n = n;
     if (!n) shot.err = "Aucune infobulle de caisse lisible dans la vidéo.";
     ocrMsg(n ? `Vidéo lue : ${n} caisse${n > 1 ? "s" : ""}. Vérifie les valeurs dans le tableau avant d'enregistrer.` : shot.err, !n);
@@ -1679,6 +1759,8 @@ async function readSelCounter(bmp, r) {
   }
   return vals;
 }
+// Libère une image d'écran (4K : ~33 Mo) sauf si elle est encore gardée : infobulle d'avant le clic ou image de diagnostic.
+function dropFrame(fs, b) { if (b && b !== (fs && fs.tipBmp) && b !== live.lastBmp && b.close) b.close(); }
 async function frameTooltip(bmp, shot, fs, at) {
   const line = findTooltipLine(bmp);
   // Mode « au clic » : on lit seulement quand une caisse vient d'être sélectionnée (nouveau cadre clair).
@@ -1703,8 +1785,8 @@ async function frameTooltip(bmp, shot, fs, at) {
       // Dernière image où une infobulle était visible : la caisse survolée juste avant le clic (le jeu masque
       // l'infobulle au moment du clic).
       const prevTip = fs.tipBmp ? { bmp: fs.tipBmp, line: fs.tipLine, at: fs.tipAt } : null;
-      if (line) { const copy = await createImageBitmap(bmp); if (fs.tipBmp && fs.tipBmp !== copy) { const old = fs.tipBmp; setTimeout(() => old.close && old.close(), 3000); }
-        fs.tipBmp = copy; fs.tipLine = line; fs.tipAt = at; }
+      // L'image elle-même est gardée (pas de copie : en 4K, chaque copie occupe ~33 Mo et la mémoire finissait par manquer).
+      if (line) { const old = fs.tipBmp; fs.tipBmp = bmp; fs.tipLine = line; fs.tipAt = at; if (old && old !== bmp) dropFrame(fs, old); }
       fs.diag.frames++; if (line) fs.diag.tips++; fs.diag.counters = fs.counters.map(c => c.n).join(" / ");
       for (const c of fs.counters) {
         const sig = counterCanvas(bmp, c.r, true);
@@ -1796,23 +1878,23 @@ function isBlackFrame(bmp) {
 async function liveTick() {
   if (live.busy || !live.video || live.video.readyState < 2) return;
   live.busy = true;
+  let bmp = null;
   try {
-    const bmp = await createImageBitmap(live.video);
+    bmp = await createImageBitmap(live.video);
     if (!live.shot.url) { const c = document.createElement("canvas"); c.width = 320; c.height = Math.round(320 * bmp.height / bmp.width); c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height); live.shot.url = c.toDataURL("image/jpeg", 0.7); renderShots(); }
     // Image partagée toute noire (jeu en plein écran exclusif) : on le signale au lieu de lire dans le vide.
     if (isBlackFrame(bmp)) {
       live.black = (live.black || 0) + 1;
       if (live.black === 6) ocrMsg("L'image partagée est noire : le navigateur ne voit pas le jeu. Arrête, puis relance en choisissant « Écran entier » au lieu de « Fenêtre » ; sinon mets le jeu en mode « Sans bordure » (Options › Graphismes), ou utilise les captures de ta carte graphique (NVIDIA Alt+F1, AMD Ctrl+Maj+I) avec « Surveiller mon dossier de captures ».", true);
-      bmp.close && bmp.close(); live.busy = false; return;
+      bmp.close && bmp.close(); bmp = null; live.busy = false; return;
     }
     if (live.black >= 6) ocrMsg("Lecture en direct active : le jeu est visible. Survole chaque caisse environ une seconde.");
     live.black = 0;
     live.frames = (live.frames || 0) + 1;
-    if (live.lastBmp && live.lastBmp.close) live.lastBmp.close();
-    live.lastBmp = await createImageBitmap(bmp);   // gardée pour le diagnostic
+    // Dernière image gardée pour le diagnostic (sans copie) ; la précédente est libérée.
+    const oldLast = live.lastBmp; live.lastBmp = bmp; dropFrame(live.fs, oldLast);
     const got = await frameTooltip(bmp, live.shot, live.fs, Date.now());
     if (live.fs.prevLine) live.seen = (live.seen || 0) + 1;
-    bmp.close && bmp.close();
     const dg = live.fs.diag;
     if (dg && ocrTrigger() === "click" && live.frames % 10 === 0)
       $("#ocrDiagLine").textContent = `Images reçues : ${dg.frames} (${live.lastBmp.width}×${live.lastBmp.height}) · ${live.fs.counters ? `compteurs « Sélectionné » lus : ${dg.counters}` : `compteur « Sélectionné » non trouvé, cadres visibles : ${dg.edges ?? "?"}`} · clics repérés : ${dg.clicks} · infobulles vues : ${dg.tips} · caisses lues : ${live.n}`;
@@ -1820,7 +1902,7 @@ async function liveTick() {
     if (got && got.missed) ocrMsg(`Caisse sélectionnée mais aucune infobulle vue : après le clic, laisse la souris sur la caisse jusqu'à ce que son infobulle apparaisse. (${live.n} caisse${live.n > 1 ? "s" : ""} lue${live.n > 1 ? "s" : ""})`, true);
     if (got && got.added) { live.n++; live.shot.n = live.n; ocrMsg(`Lecture en direct : ${live.n} caisse${live.n > 1 ? "s" : ""} lue${live.n > 1 ? "s" : ""}. Continue, ou clique sur « Arrêter ».`); }
     if (st.items.filter(i => i.shot === live.shot.id).length >= VIDEO_MAX_READS) stopLive();
-  } catch (err) { ocrMsg(errText(err), true); }
+  } catch (err) { ocrMsg(errText(err), true); if (bmp && bmp !== live.lastBmp) dropFrame(live.fs, bmp); }
   live.busy = false;
 }
 function stopLive() {
