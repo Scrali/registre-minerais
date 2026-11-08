@@ -1497,7 +1497,7 @@ async function ocrVideo(file) {
 const STABLE_MS = 700;
 const ocrTrigger = () => (document.querySelector("input[name=ocrTrig]:checked") || {}).value || "click";
 // Cadres de sélection du jeu (trait fin et clair autour d'une case cliquée, légèrement incliné : écran en 3D).
-// Renvoie le nombre de bords verticaux distincts : il augmente quand une caisse vient d'être sélectionnée.
+// Renvoie les bords verticaux distincts (clé -> position) : il en apparaît deux quand une caisse est sélectionnée.
 function selectionEdges(bmp) {
   const W = bmp.width, H = bmp.height, c = document.createElement("canvas"); c.width = W; c.height = H;
   const g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(bmp, 0, 0);
@@ -1511,7 +1511,7 @@ function selectionEdges(bmp) {
     const p = y * W + x, l = L[p];
     if (l > 130 && S[p] < 35 && l - L[p - k] > 40 && l - L[p + k] > 40) line[p] = 1;
   }
-  const used = new Uint8Array(W * H), minLen = Math.round(H * 0.09), keys = new Set();
+  const used = new Uint8Array(W * H), minLen = Math.round(H * 0.09), keys = new Map();
   // Un bord = position horizontale + rangée de cases (centre vertical) : stable d'une image à l'autre.
   for (let y = 0; y < H - 1; y++) for (let x = 0; x < W; x++) {
     const p = y * W + x; if (!line[p] || used[p]) continue;
@@ -1524,18 +1524,27 @@ function selectionEdges(bmp) {
       if (nx < 0) { if (++gap > 4) break; continue; }
       gap = 0; cx = nx;
     }
-    if (cy - y >= minLen) keys.add(Math.round(sx / n / (W / 200)) + ":" + Math.round((y + cy) / 2 / (H / 18)));
+    if (cy - y >= minLen) {
+      const k = Math.round(sx / n / (W / 200)) + ":" + Math.round((y + cy) / 2 / (H / 18));
+      if (!keys.has(k)) keys.set(k, { x: Math.round(sx / n), y0: y, y1: cy });
+    }
   }
-  return keys.size;
+  return keys;
 }
 async function frameTooltip(bmp, shot, fs, at) {
   const line = findTooltipLine(bmp);
   // Mode « au clic » : on lit seulement quand une caisse vient d'être sélectionnée (nouveau cadre clair).
   // Le jeu masque l'infobulle au moment du clic : après une nouvelle sélection, on attend qu'elle s'affiche (4 s au plus).
   if (ocrTrigger() === "click") {
-    const edges = selectionEdges(bmp);
-    if (fs.edges == null || edges < fs.edges) fs.edges = edges;          // départ ou désélection
-    else if (edges >= fs.edges + 2) { fs.edges = edges; fs.pending = at + 4000; fs.clicks = (fs.clicks || 0) + 1; }
+    const edgeMap = selectionEdges(bmp), edges = edgeMap.size;
+    if (fs.edges == null || edges < fs.edges) { fs.edges = edges; fs.edgeKeys = new Set(edgeMap.keys()); }   // départ ou désélection
+    else if (edges >= fs.edges + 2) {
+      // Carré de la caisse qui vient d'être sélectionnée : entre ses deux nouveaux bords.
+      const fresh = [...edgeMap].filter(([k]) => !(fs.edgeKeys || new Set()).has(k)).map(([, v]) => v);
+      fs.square = fresh.length >= 2 ? { x0: Math.min(...fresh.map(e => e.x)), x1: Math.max(...fresh.map(e => e.x)),
+        y0: Math.min(...fresh.map(e => e.y0)), y1: Math.max(...fresh.map(e => e.y1)) } : null;
+      fs.edges = edges; fs.edgeKeys = new Set(edgeMap.keys()); fs.pending = at + 4000; fs.clicks = (fs.clicks || 0) + 1;
+    }
     const sigNow = line ? lineSig(bmp, line) : "";
     const sameAs = (a, sa) => !!(line && a && Math.abs(line.x - a.x) + Math.abs(line.y - a.y) <= 12 && sigDiff(sigNow, sa) <= 0.08);
     // Stabilité : même infobulle que l'image précédente.
@@ -1546,6 +1555,12 @@ async function frameTooltip(bmp, shot, fs, at) {
     // Après un clic, l'infobulle de la caisse précédente reste parfois affichée un instant : on attend une infobulle
     // différente de la dernière lue, immobile sur deux images de suite.
     if (!line || !steady || sameAs(fs.lastLine, fs.lastSig)) return null;
+    // L'infobulle doit appartenir au carré sélectionné : elle s'affiche contre la caisse survolée (au clic).
+    if (fs.square) {
+      const W = bmp.width, H = bmp.height, q = fs.square;
+      const near = line.x >= q.x0 - W * 0.06 && line.x <= q.x1 + W * 0.12 && line.y >= q.y0 - H * 0.03 && line.y <= q.y1 + H * 0.12;
+      if (!near) return null;
+    }
     fs.pending = 0; fs.lastLine = line; fs.lastSig = sigNow;
     const r = await readTooltipBitmap(bmp, line, false);
     if (!r) return { added: false };
