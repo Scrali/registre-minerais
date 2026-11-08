@@ -18,6 +18,7 @@ test("Variantes de lecture OCR : séparateurs, virgule, O pour 0, anglais, accen
   assert.equal(parseTooltip("Quantainium (Ore) 712 50 cSCU").qty, 0.5);
   assert.equal(parseTooltip("Fer 874 250000 µSCU").qty, 0.25);
   assert.equal(parseTooltip("Pressurized Ice (M) 300 1.2 SCU").name, "Pressurized Ice");
+  assert.equal(parseTooltip("Fer 32s 1 SCU").quality, 325, "s lu à la place d'un 5 en fin de qualité");
 });
 
 test("Textes qui ne sont pas une infobulle de contenu : ignorés", () => {

@@ -1321,6 +1321,14 @@ async function ocrWorker() {
 }
 // Repère la ligne de contenu de l'infobulle : l'étiquette violette du nom (« Cuivre (M) »).
 // Renvoie un rectangle dans l'image d'origine, ou null (on lit alors l'image entière).
+// Pixel de l'étiquette violette / magenta du nom.
+function isBadge(d, i) {
+  const r = d[i] / 255, gg = d[i + 1] / 255, b = d[i + 2] / 255, mx = Math.max(r, gg, b), mn = Math.min(r, gg, b), s = mx ? (mx - mn) / mx : 0;
+  if (mx === mn) return false;
+  let hue = mx === r ? 60 * (((gg - b) / (mx - mn)) % 6) : mx === gg ? 60 * ((b - r) / (mx - mn) + 2) : 60 * ((r - gg) / (mx - mn) + 4);
+  if (hue < 0) hue += 360;
+  return hue >= 260 && hue <= 356 && s > 0.3 && mx > 0.25;
+}
 function findTooltipLine(bmp) {
   const k = 4, w = Math.ceil(bmp.width / k), h = Math.ceil(bmp.height / k);
   const c = document.createElement("canvas"); c.width = w; c.height = h;
@@ -1341,9 +1349,22 @@ function findTooltipLine(bmp) {
   if (best < 0) return null;
   const near = pts.filter(([, y]) => Math.abs(y - best) <= 4);
   const x0 = Math.min(...near.map(p => p[0])), y0 = Math.min(...near.map(p => p[1])), y1 = Math.max(...near.map(p => p[1]));
-  const left = Math.max(0, (x0 - 3) * k), top = Math.max(0, (y0 - 3) * k), bottom = Math.min(bmp.height, (y1 + 4) * k);
-  const width = Math.min(bmp.width - left, Math.round(bmp.width * 0.16));
-  return { x: left, y: top, w: width, h: bottom - top };
+  // Affinage en pleine résolution : hauteur exacte de l'étiquette (lignes contenant assez de violet).
+  const fx = Math.max(0, (x0 - 2) * k), fy = Math.max(0, (y0 - 3) * k), fw = Math.min(bmp.width - fx, (Math.max(...near.map(p => p[0])) - x0 + 5) * k), fh = Math.min(bmp.height - fy, (y1 - y0 + 7) * k);
+  const f = document.createElement("canvas"); f.width = fw; f.height = fh;
+  const fg = f.getContext("2d", { willReadFrequently: true }); fg.drawImage(bmp, fx, fy, fw, fh, 0, 0, fw, fh);
+  const fd = fg.getImageData(0, 0, fw, fh).data; let top = -1, bot = -1, lft = fw;
+  for (let y = 0; y < fh; y++) {
+    let n = 0;
+    for (let x = 0; x < fw; x++) if (isBadge(fd, (y * fw + x) * 4)) { n++; if (x < lft) lft = x; }
+    if (n >= Math.max(3, fw * 0.15)) { if (top < 0) top = y; bot = y; }
+  }
+  if (top < 0) return null;
+  const h0 = bot - top + 1, left = fx + Math.max(0, lft - 2), y = Math.max(0, fy + top - Math.round(h0 * 0.15));
+  const height = Math.min(bmp.height - y, Math.round(h0 * 1.3) + 1);
+  // La ligne s'étend jusqu'au contenu en SCU, aligné à droite de l'infobulle (mesuré : environ 230 px sur 2000).
+  const width = Math.min(bmp.width - left, Math.max(Math.round(h0 * 16), Math.round(bmp.width * 0.125)));
+  return { x: left, y, w: width, h: height };
 }
 // Image préparée pour l'OCR : agrandie, en niveaux de gris, texte clair rendu foncé sur fond blanc.
 function ocrCanvas(bmp, r, scale) {
@@ -1351,7 +1372,12 @@ function ocrCanvas(bmp, r, scale) {
   const g = c.getContext("2d", { willReadFrequently: true }); g.imageSmoothingEnabled = true;
   g.drawImage(bmp, r.x, r.y, r.w, r.h, 0, 0, c.width, c.height);
   const im = g.getImageData(0, 0, c.width, c.height), d = im.data;
-  for (let i = 0; i < d.length; i += 4) { const l = 0.3 * d[i] + 0.59 * d[i + 1] + 0.11 * d[i + 2]; const v = l > 150 ? 0 : 255; d[i] = d[i + 1] = d[i + 2] = v; }
+  // Texte de l'infobulle : clair et peu coloré (blanc, crème) ; les fonds colorés des étiquettes deviennent blancs.
+  for (let i = 0; i < d.length; i += 4) {
+    const mx = Math.max(d[i], d[i + 1], d[i + 2]), mn = Math.min(d[i], d[i + 1], d[i + 2]), l = 0.3 * d[i] + 0.59 * d[i + 1] + 0.11 * d[i + 2];
+    const text = l > 135 && (mx - mn) / (mx || 1) < 0.4;
+    d[i] = d[i + 1] = d[i + 2] = text ? 0 : 255;
+  }
   g.putImageData(im, 0, 0);
   return c;
 }
@@ -1364,7 +1390,8 @@ async function readTooltipBitmap(bmp, line, fallback) {
   let found = null, proof = null;
   if (line) {
     await w.setParameters({ tessedit_pageseg_mode: "7" });
-    const { data } = await w.recognize(ocrCanvas(bmp, line, 3));
+    const scale = Math.max(3, Math.min(8, 60 / line.h));   // texte d'environ 40 px de haut pour l'OCR
+    const { data } = await w.recognize(ocrCanvas(bmp, line, scale));
     found = OcrLogic.parseTooltip(data.text);
     if (found) found.confidence = (data.confidence || 0) / 100;
     const p = document.createElement("canvas"); p.width = Math.min(320, line.w); p.height = Math.round(line.h * p.width / line.w);

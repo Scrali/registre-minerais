@@ -4,7 +4,7 @@
 (function (root) {
   const UNIT = { scu: 1, cscu: 0.01, mscu: 1e-6, "µscu": 1e-6, uscu: 1e-6 };
   // Corrections OCR courantes dans les nombres (O -> 0, l/I -> 1, S -> 5 entre deux chiffres).
-  const digits = s => s.replace(/(?<=\d)[oO](?=[\d.,]|$)|(?<=^|\s)[oO](?=[.,]\d)/g, "0").replace(/(?<=\d)[lI|](?=\d)/g, "1");
+  const digits = s => s.replace(/(?<=\d)[oO](?=[\d.,]|$)|(?<=^|\s)[oO](?=[.,]\d)/g, "0").replace(/(?<=\d)[lI|](?=\d)/g, "1").replace(/(?<=\s\d{1,3})[sS](?=\s)/g, "5");
   const clean = s => String(s || "").replace(/[|¦]/g, " ").replace(/[‐-―]/g, "-").replace(/\s+/g, " ").trim();
 
   function parseTooltip(text) {
