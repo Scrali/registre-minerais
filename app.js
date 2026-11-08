@@ -1687,6 +1687,9 @@ async function readGemCount(bmp, line, quality) {
     if (cands.length) break;
   }
   // Étiquette de la case survolée : la rangée la plus proche au-dessus de la souris, puis la première à sa droite.
+  // (seulement les vraies étiquettes « X » + chiffres : un reflet clair du minerai blanc n'en est pas une)
+  const real = cands.filter(b => [35, 20, 50].some(off => gemGlyphs(bmp, b, off)));
+  cands.length = 0; cands.push(...real);
   const rowY = Math.max(-1, ...cands.map(b => b.y));
   const mine = cands.filter(b => b.y >= rowY - cellH * 0.35).sort((a, b) => (a.x + a.w) - (b.x + b.w));
   cands.length = 0; cands.push(...mine);
@@ -1700,9 +1703,17 @@ async function readGemCount(bmp, line, quality) {
     cb = null;
     // Toutes les cases proches sont vérifiées : deux cases de même qualité (deux « 1000 Q » côte à côte) rendent le
     // choix incertain si leurs « X N » diffèrent.
-    const hits = [];
+    const hits = [], unread = [];
     for (const b of valid) {
-      for (const thr of [165, 140, 190]) { const q = await readCellQuality(bmp, b, thr); seen.push(q); if (sameCellQuality(q, quality)) { hits.push(b); break; } }
+      let any = false, hit = false;
+      for (const thr of [165, 140, 190]) { const q = await readCellQuality(bmp, b, thr); seen.push(q); if (q != null) any = true; if (sameCellQuality(q, quality)) { hits.push(b); hit = true; break; } }
+      if (!hit && !any) unread.push(b);
+    }
+    const tipR0 = line.x + line.w + line.h * 0.8, inCell0 = (b, x) => x >= b.x + b.w - cellW * 0.97 && x <= b.x + b.w + cellW * 0.05;
+    // Par élimination : aucune qualité ne correspond, toutes les autres cases sont lues (et différentes), une seule case
+    // reste illisible et elle contient la souris : c'est elle.
+    if (!hits.length && unread.length === 1 && valid.length > 1 && (inCell0(unread[0], tipX) || inCell0(unread[0], tipR0))) {
+      hits.push(unread[0]); olog("gemme : case retenue par élimination (sa qualité est illisible, les autres ne correspondent pas)");
     }
     // Plusieurs cases de même qualité : on garde celles qui contiennent la souris, que l'infobulle soit ouverte à
     // droite de la souris (coin gauche de l'infobulle dans la case) ou à gauche (coin droit dans la case).
@@ -1965,6 +1976,8 @@ async function frameTooltip(bmp, shot, fs, at) {
         const n = v1 != null && v1 === v2 ? v1 : (v1 == null) !== (v2 == null) && (plausible(one) || c.n == null) ? one : null;
         olog(`compteur ${c.r.x},${c.r.y} : ${c.n ?? "?"} -> ${n ?? `ignoré (${v1 ?? "?"}/${v2 ?? "?"})`}`);
         if (n == null) continue;
+        // Saut de plus de 3 (ex. 26 -> 0 -> 26 sur une image floue) : lecture fausse du compteur, pas des clics.
+        if (c.n != null && (n > c.n + 3 || n < c.n)) { olog(`compteur ${c.r.x},${c.r.y} : ${c.n} -> ${n} (saut, pas compté comme clic)`); c.n = n; continue; }
         if (c.n != null && n > c.n) { fs.pending = at + 4000; fs.clickFrame = true; fs.diag.clicks++; olog(`clic repéré${line ? "" : prevTip && at - prevTip.at < 1500 ? " (infobulle masquée : lecture de l'image d'avant le clic)" : " (pas d'infobulle : attente)"}`);
           // Plusieurs sélections entre deux images : une seule infobulle est visible, les autres caisses ne peuvent pas être lues.
           if (n - c.n >= 2) { olog(`${n - c.n} sélections d'un coup : ${n - c.n - 1} caisse(s) non lue(s)`);
