@@ -2025,14 +2025,31 @@ async function frameTooltip(bmp, shot, fs, at) {
       // L'image elle-même est gardée (pas de copie : en 4K, chaque copie occupe ~33 Mo et la mémoire finissait par manquer).
       if (line) { const old = fs.tipBmp; fs.tipBmp = bmp; fs.tipLine = line; fs.tipAt = at; if (old && old !== bmp) dropFrame(fs, old); }
       fs.diag.frames++; if (line) fs.diag.tips++; fs.diag.counters = fs.counters.map(c => c.n).join(" / ");
+      // Compteurs illisibles depuis plusieurs images (la vue a bougé, l'écran du jeu s'est déplacé) : ils sont
+      // recherchés de nouveau, au plus toutes les 5 s ; la dernière valeur connue est gardée.
+      if (fs.counters.some(c => (c.fail || 0) >= 6) && !(at - (fs.relocAt || 0) < 5000)) {
+        fs.relocAt = at; fs.counterBusy = true;
+        try {
+          const regs = await findSelCounters(bmp);
+          for (const c of fs.counters) {
+            const side = c.r.x + c.r.w / 2 < bmp.width / 2;
+            const r = regs.filter(g => (g.x + g.w / 2 < bmp.width / 2) === side)
+              .sort((a, b) => Math.hypot(a.x - c.r.x, a.y - c.r.y) - Math.hypot(b.x - c.r.x, b.y - c.r.y))[0];
+            if (r && (r.x !== c.r.x || r.y !== c.r.y)) { olog(`compteur ${c.r.x},${c.r.y} retrouvé en ${r.x},${r.y} (la vue a bougé)`); c.r = r; c.sig = ""; c.fail = 0; c.pend = null; }
+          }
+        } catch (e) { olog("erreur repérage compteur : " + errText(e)); }
+        finally { fs.counterBusy = false; }
+      }
       for (const c of fs.counters) {
         const sig = counterCanvas(bmp, c.r, true);
-        if (sig === c.sig) continue;
+        if (sig === c.sig) { if (c.fail) c.fail++; continue; }   // image inchangée mais illisible : l'échec compte encore
         c.sig = sig;
         // Valeur retenue : confirmée par les deux lectures, ou lue une seule fois si c'est une hausse plausible (+1 à +3).
         const [v1, v2] = await readSelCounter(bmp, c.r);
-        const one = v1 ?? v2, plausible = v => v != null && c.n != null && v > c.n && v <= c.n + 3;
+        // Après des lectures ratées (vue qui bouge), une seule lecture ne suffit plus : les deux doivent concorder.
+        const one = v1 ?? v2, plausible = v => v != null && c.n != null && v > c.n && v <= c.n + 3 && !c.fail;
         const n = v1 != null && v1 === v2 ? v1 : (v1 == null) !== (v2 == null) && (plausible(one) || c.n == null) ? one : null;
+        c.fail = n == null ? (c.fail || 0) + 1 : 0;
         olog(`compteur ${c.r.x},${c.r.y} : ${c.n ?? "?"} -> ${n ?? `ignoré (${v1 ?? "?"}/${v2 ?? "?"})`}`);
         if (n == null) continue;
         // Saut de plus de 3 (ex. 26 -> 0 -> 26 sur une image floue) : lecture fausse du compteur, pas des clics.
