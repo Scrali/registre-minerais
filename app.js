@@ -251,6 +251,20 @@ async function loadProfiles() {
   renderAllStocks();
   memberOptions($("#sMember"), "Tous les membres");
 }
+// Menus de ressources rangés par chapitres (minerais, gemmes, armes, composants…), dans un ordre fixe.
+const RES_GROUPS = [["Minerai raffiné", "Minerais raffinés"], ["Minerai brut", "Minerais bruts"], ["Gemme", "Gemmes"],
+  ["Arme FPS", "Armes FPS"], ["Arme de vaisseau", "Armes de vaisseau"], ["Composant de vaisseau", "Composants de vaisseau"]];
+function resGroupOf(r) {
+  const c = norm(r.category || "");
+  const g = RES_GROUPS.find(([k]) => norm(k) === c);
+  return g ? g[1] : /gemme|objet/.test(c) ? "Gemmes" : /brut/.test(c) ? "Minerais bruts" : /minerai|raffin/.test(c) ? "Minerais raffinés" : "Autres ressources";
+}
+function resOptions(list, { selected = null, label = r => esc(r.name) } = {}) {
+  const groups = new Map([...RES_GROUPS.map(g => [g[1], []]), ["Autres ressources", []]]);
+  for (const r of list.slice().sort(byName)) groups.get(resGroupOf(r)).push(r);
+  return [...groups].filter(([, rs]) => rs.length).map(([g, rs]) => `<optgroup label="${esc(g)}">`
+    + rs.map(r => `<option value="${esc(r.id)}"${r.id === selected ? " selected" : ""}>${label(r)}</option>`).join("") + "</optgroup>").join("");
+}
 async function loadResources() {
   const { data, error } = await sb.from("resources").select("*").order("name");
   if (error) return setStatus("Impossible de charger les stocks : " + errText(error));
@@ -602,7 +616,7 @@ function renderMine() {
   }).join("");
   $("#moveForm").hidden = !canEdit;
   const rs = $("#mvRes"), cur = rs.value;
-  rs.innerHTML = st.resources.slice().sort(byName).map(r => `<option value="${esc(r.id)}">${esc(r.name)}${r.name_en && norm(r.name_en) !== norm(r.name) ? " (" + esc(r.name_en) + ")" : ""}</option>`).join("");
+  rs.innerHTML = resOptions(st.resources, { label: r => esc(r.name) + (r.name_en && norm(r.name_en) !== norm(r.name) ? " (" + esc(r.name_en) + ")" : "") });
   if (cur && st.resources.some(r => r.id === cur)) rs.value = cur;
   if (!$("#mvPlace").value) $("#mvPlace").value = loc ? locName(loc) : $("#capPlace").value;
   renderMvLots();
@@ -1325,7 +1339,7 @@ function renderReview() {
       <td><input type="number" class="qin" step="1" min="0" max="1000" placeholder="?" data-f="quality" id="rv-q-${i}" value="${esc(it.quality)}" aria-label="Qualité"></td>
       <td><input type="number" step="any" min="0" data-f="qty" id="rv-qty-${i}" value="${it.qty}" aria-label="Quantité"${it.needQty && !(num(it.qty) > 0) ? (it.unit ? ' class="needqty" placeholder="SCU ?" title="Contenu de la caisse : survole-la dans le jeu et recopie la valeur en SCU"' : ' class="needqty" placeholder="nombre ?" title="Nombre de gemmes : la valeur « x1 », « x5 »… affichée sur la case"') : ""}>${it.needQty && !(num(it.qty) > 0) ? `<div class="colordesc">${it.unit ? "contenu à saisir (survol en jeu)" : "nombre affiché sur la case (x1, x5…)"}</div>` : ""}</td>
       <td><input type="text" class="uin" data-f="unit" id="rv-unit-${i}" list="unitList" maxlength="20" placeholder="objets" value="${esc(it.unit)}" aria-label="Unité"></td>
-      <td><select data-f="target" id="rv-target-${i}"><option value="new"${it.target === "new" ? " selected" : ""}>Nouvelle ressource (ajoutée au catalogue)</option>${opts.map(o => `<option value="${esc(o.id)}"${o.id === it.target ? " selected" : ""}>${esc(o.name)}</option>`).join("")}</select></td></tr>`);
+      <td><select data-f="target" id="rv-target-${i}"><option value="new"${it.target === "new" ? " selected" : ""}>Nouvelle ressource (ajoutée au catalogue)</option>${resOptions(opts, { selected: it.target })}</select></td></tr>`);
     }
   }
   $("#reviewBody").innerHTML = rows.join("");
@@ -2534,7 +2548,7 @@ async function addToLibrary(resourceId, image, terminal, source) {
 function renderImages() {
   const q = norm($("#iQ").value), t = $("#iTerm").value;
   const rs = $("#iRes"), cur = rs.value;
-  rs.innerHTML = st.resources.slice().sort(byName).map(r => `<option value="${esc(r.id)}">${esc(r.name)}${r.name_en && norm(r.name_en) !== norm(r.name) ? " (" + esc(r.name_en) + ")" : ""}</option>`).join("");
+  rs.innerHTML = resOptions(st.resources, { label: r => esc(r.name) + (r.name_en && norm(r.name_en) !== norm(r.name) ? " (" + esc(r.name_en) + ")" : "") });
   if (cur && st.resources.some(r => r.id === cur)) rs.value = cur;
   const list = st.resources.filter(r => !q || resMatch(r, q)).sort(byName);
   let shown = 0;
@@ -2937,7 +2951,7 @@ function renderBpAdmin() {
   const used = new Map();
   for (const b of bp.list) for (const i of bpIng(b)) { used.set(i.api_uuid, (used.get(i.api_uuid) || 0) + 1); if (i.ore_uuid) used.set(i.ore_uuid, used.get(i.ore_uuid) || 0); }
   const f = $("#bpMapFilter").value;
-  const opts = st.resources.slice().sort(byName).map(r => `<option value="${esc(r.id)}">${esc(r.name)}</option>`).join("");
+  const opts = resOptions(st.resources);
   const rows = bp.mats.map(m => ({ m, mm: bp.maps.find(x => x.api_uuid === m.api_uuid) || { status: "unmatched" } }))
     .filter(({ mm }) => f !== "todo" || ["suggested", "unmatched"].includes(mm.status))
     .sort((a, b) => (used.get(b.m.api_uuid) || 0) - (used.get(a.m.api_uuid) || 0));
@@ -3081,18 +3095,16 @@ function renderDb() {
   body.replaceChildren(...tmp.children);
   $("#dbEmpty").hidden = st.resources.length > 0;
 
-  const opts = st.resources.slice().sort((a, b) => a.name.localeCompare(b.name))
-    .map(r => `<option value="${esc(r.id)}">${esc(r.name)}</option>`).join("");
+  const opts = resOptions(st.resources);
   // Source d'une fusion (supprimée ensuite) : jamais une ressource protégée du catalogue.
-  const srcOpts = st.resources.filter(r => !r.locked).sort((a, b) => a.name.localeCompare(b.name))
-    .map(r => `<option value="${esc(r.id)}">${esc(r.name)}</option>`).join("");
+  const srcOpts = resOptions(st.resources.filter(r => !r.locked));
   for (const id of ["#mSource", "#mTarget"]) {
     const sel = $(id), cur = sel.value;
     sel.innerHTML = '<option value="">Choisir…</option>' + (id === "#mSource" ? srcOpts : opts);
     if (st.resources.some(r => r.id === cur)) sel.value = cur;
   }
   const hr = $("#hRes"), hrCur = hr.value;
-  hr.innerHTML = '<option value="">Toutes</option>' + st.resources.slice().sort((a, b) => a.name.localeCompare(b.name)).map(r => `<option value="${esc(r.id)}">${esc(r.name)}</option>`).join("");
+  hr.innerHTML = '<option value="">Toutes</option>' + resOptions(st.resources);
   hr.value = hrCur;
   const hw = $("#hWho"), hwCur = hw.value;
   hw.innerHTML = '<option value="">Tous</option>' + Object.values(st.profiles).sort((a, b) => a.pseudo.localeCompare(b.pseudo)).map(p => `<option value="${esc(p.id)}">${esc(p.pseudo)}</option>`).join("");
