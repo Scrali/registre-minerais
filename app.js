@@ -1334,28 +1334,48 @@ function isBadge(d, i) {
   if (hue < 0) hue += 360;
   return hue >= 260 && hue <= 356 && s > 0.3 && mx > 0.25;
 }
+// Pixel de l'étiquette olive du contenu (« 0.115 SCU ») : teinte 38-70°, mesurée sur les deux écrans du jeu.
+function isOlive(d, i, strict) {
+  const r = d[i], g2 = d[i + 1], b = d[i + 2], mx = Math.max(r, g2, b), mn = Math.min(r, g2, b);
+  if (mx < 70 || mx === mn || (mx - mn) / mx < 0.45) return false;
+  let hue = mx === r ? 60 * (((g2 - b) / (mx - mn)) % 6) : mx === g2 ? 60 * ((b - r) / (mx - mn) + 2) : 60 * ((r - g2) / (mx - mn) + 4);
+  if (hue < 0) hue += 360;
+  // Le fond orangé du terminal de fret est à 31-39° : la fin de l'étiquette se mesure à partir de 41°.
+  return hue >= (strict ? 41 : 38) && hue <= 70;
+}
 function findTooltipLine(bmp) {
-  const k = 4, w = Math.ceil(bmp.width / k), h = Math.ceil(bmp.height / k);
+  // Zones violettes candidates (composantes connexes) : on garde celle qui a la forme de l'étiquette du nom
+  // (petit rectangle plein, plus large que haut) suivie à droite de l'étiquette olive du contenu. Un cristal rose ou
+  // un autre élément violet de l'écran n'a pas cette forme.
+  const k = 2, w = Math.ceil(bmp.width / k), h = Math.ceil(bmp.height / k);
   const c = document.createElement("canvas"); c.width = w; c.height = h;
   const g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(bmp, 0, 0, w, h);
-  const d = g.getImageData(0, 0, w, h).data, rows = new Array(h).fill(0), pts = [];
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-    const i = (y * w + x) * 4, r = d[i] / 255, gg = d[i + 1] / 255, b = d[i + 2] / 255;
-    const mx = Math.max(r, gg, b), mn = Math.min(r, gg, b), s = mx ? (mx - mn) / mx : 0;
-    let hue = 0;
-    if (mx !== mn) hue = mx === r ? 60 * (((gg - b) / (mx - mn)) % 6) : mx === gg ? 60 * ((b - r) / (mx - mn) + 2) : 60 * ((r - gg) / (mx - mn) + 4);
-    if (hue < 0) hue += 360;
-    // Étiquette violette / magenta du nom (« Cuivre (M) »), tolérante aux variations d'éclairage et de compression.
-    // Mesuré sur le jeu : ~345° sous l'éclairage orangé du terminal de fret, ~290-320° ailleurs.
-    if (hue >= 260 && hue <= 356 && s > 0.3 && mx > 0.25) { rows[y]++; pts.push([x, y]); }
+  const d = g.getImageData(0, 0, w, h).data, mask = new Uint8Array(w * h);
+  for (let p = 0; p < w * h; p++) if (isBadge(d, p * 4)) mask[p] = 1;
+  const stack = new Int32Array(w * h); let best = null;
+  const maxH = Math.max(18, Math.round(h * 0.03));
+  for (let p0 = 0; p0 < w * h; p0++) {
+    if (mask[p0] !== 1) continue;
+    let sp = 0, n = 0, x0 = w, x1 = 0, y0 = h, y1 = 0; stack[sp++] = p0; mask[p0] = 2;
+    while (sp) {
+      const p = stack[--sp], x = p % w, y = (p - x) / w; n++;
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+      if (x > 0 && mask[p - 1] === 1) { mask[p - 1] = 2; stack[sp++] = p - 1; }
+      if (x < w - 1 && mask[p + 1] === 1) { mask[p + 1] = 2; stack[sp++] = p + 1; }
+      if (y > 0 && mask[p - w] === 1) { mask[p - w] = 2; stack[sp++] = p - w; }
+      if (y < h - 1 && mask[p + w] === 1) { mask[p + w] = 2; stack[sp++] = p + w; }
+    }
+    const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+    if (bh < 3 || bh > maxH || bw < bh * 2 || bw > w * 0.15 || n / (bw * bh) < 0.35) continue;
+    let olive = 0;
+    for (let y = y0; y <= y1; y++) for (let x = x1 + 1; x < Math.min(w, x1 + bh * 16); x++) if (isOlive(d, (y * w + x) * 4)) olive++;
+    const score = (olive >= bh * 2 ? 1e6 : 0) + n;
+    if (!best || score > best.score) best = { score, x0, x1, y0, y1 };
   }
-  let best = -1, bestN = 2;
-  for (let y = 0; y < h; y++) if (rows[y] > bestN) { bestN = rows[y]; best = y; }
-  if (best < 0) return null;
-  const near = pts.filter(([, y]) => Math.abs(y - best) <= 4);
-  const x0 = Math.min(...near.map(p => p[0])), y0 = Math.min(...near.map(p => p[1])), y1 = Math.max(...near.map(p => p[1]));
+  if (!best) return null;
+  const x0 = best.x0, y0 = best.y0, y1 = best.y1, near = [[best.x0, best.y0], [best.x1, best.y1]];
   // Affinage en pleine résolution : hauteur exacte de l'étiquette (lignes contenant assez de violet).
-  const fx = Math.max(0, (x0 - 2) * k), fy = Math.max(0, (y0 - 3) * k), fw = Math.min(bmp.width - fx, (Math.max(...near.map(p => p[0])) - x0 + 5) * k), fh = Math.min(bmp.height - fy, (y1 - y0 + 7) * k);
+  const fx = Math.max(0, (x0 - 3) * k), fy = Math.max(0, (y0 - 4) * k), fw = Math.min(bmp.width - fx, (Math.max(...near.map(p => p[0])) - x0 + 7) * k), fh = Math.min(bmp.height - fy, (y1 - y0 + 9) * k);
   const f = document.createElement("canvas"); f.width = fw; f.height = fh;
   const fg = f.getContext("2d", { willReadFrequently: true }); fg.drawImage(bmp, fx, fy, fw, fh, 0, 0, fw, fh);
   const fd = fg.getImageData(0, 0, fw, fh).data; let top = -1, bot = -1, lft = fw;
@@ -1376,13 +1396,9 @@ function findTooltipLine(bmp) {
   for (let x = width - 1; x >= 0 && lastOlive < 0; x--) {
     let n = 0;
     for (let yy = 0; yy < height; yy++) {
-      const i = (yy * width + x) * 4, r = od[i], g2 = od[i + 1], b = od[i + 2], mx = Math.max(r, g2, b), mn = Math.min(r, g2, b);
-      if (mx < 82 || mx === mn) continue;   // étiquette olive mesurée : teinte 42-49°, saturation > 0,6, luminosité > 0,35
-      let hue = mx === r ? 60 * (((g2 - b) / (mx - mn)) % 6) : mx === g2 ? 60 * ((b - r) / (mx - mn) + 2) : 60 * ((r - g2) / (mx - mn) + 4);
-      if (hue < 0) hue += 360;
-      if (hue >= 40 && hue <= 60 && (mx - mn) / mx > 0.55) n++;
+      if (isOlive(od, (yy * width + x) * 4, true)) n++;
     }
-    if (n >= Math.max(3, height * 0.3)) lastOlive = x;
+    if (n >= Math.max(3, height * 0.5)) lastOlive = x;
   }
   if (lastOlive > h0 * 6) width = Math.min(width, lastOlive + Math.round(h0 * 0.4));
   return { x: left, y, w: width, h: height };
