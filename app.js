@@ -2868,7 +2868,7 @@ function renderBlueprints() {
 }
 // Qualités en stock pour une matière de la recette, dans l'unité de la recette (cSCU convertis en SCU).
 // Vert : qualité suffisante pour la qualité visée ; grisé : en dessous. Les lots dans une autre unité sont signalés à part.
-function stockQualities(o) {
+function stockQualities(o, slotKey) {
   const byQ = {}, other = {};
   for (const s of bpStocks()) {
     if (s.resource_id !== o.resource_id) continue;
@@ -2878,7 +2878,14 @@ function stockQualities(o) {
   }
   const ks = Object.keys(byQ).sort(byQdesc);
   const ok = k => o.min_quality == null ? true : k === "-" ? o.min_quality <= 0 : +k >= o.min_quality;
-  const chips = ks.map(k => `<span class="lot${ok(k) ? " hi" : " low"}" title="${ok(k) ? "Qualité suffisante" : "Sous la qualité visée"}"><b>${k === "-" ? "Q?" : "Q" + k}</b> ${fmt(byQ[k])}${o.unit ? " " + esc(o.unit) : ""}</span>`).join("");
+  // Un clic sur une qualité connue la met en « Qualité visée » de l'emplacement (premier choix de la ligne seulement).
+  const pick = slotKey != null, cur = pick ? bp.target[slotKey] : null;
+  const chips = ks.map(k => {
+    const inner = `<b>${k === "-" ? "Q?" : "Q" + k}</b> ${fmt(byQ[k])}${o.unit ? " " + esc(o.unit) : ""}`, cls = `lot${ok(k) ? " hi" : " low"}${pick && +k === cur ? " chosen" : ""}`;
+    return pick && k !== "-"
+      ? `<button type="button" class="${cls} qpick" data-setq="${esc(slotKey)}" data-q="${esc(k)}" title="Viser la qualité ${esc(k)} pour cet emplacement">${inner}</button>`
+      : `<span class="${cls}" title="${ok(k) ? "Qualité suffisante" : "Sous la qualité visée"}">${inner}</span>`;
+  }).join("");
   const rest = Object.entries(other).map(([u, v]) => `${fmt(v)} ${esc(u)}`).join(", ");
   return (chips ? `<div class="lots">${chips}</div>` : "") + (rest ? `<div class="colordesc">+ ${rest} non comptés (autre unité)</div>` : "")
     || '<div class="colordesc">rien en stock</div>';
@@ -2914,7 +2921,7 @@ function renderBpDetail() {
     : `${esc(e.label)} <span class="${(e.k > 1) === (e.better !== "lower") && e.k !== 1 && e.better !== "neutral" ? "up" : e.k !== 1 && e.better !== "neutral" ? "down" : ""}">${e.k >= 1 ? "+" : "−"}${fmt(Math.abs(e.k - 1) * 100)} %</span>`).join("<br>");
   $("#bpIngBody").innerHTML = v.slots.map(s => s.options.map((o, k) => {
     const mapRow = bp.maps.find(m => m.api_uuid === o.api_uuid);
-    const reg = o.resource_id ? esc(resName(o.resource_id)) + ((resOf(o.resource_id) || {}).name_en ? ` <span class="muted" lang="en">(${esc(resOf(o.resource_id).name_en)})</span>` : "") + stockQualities(o) : mapRow && mapRow.status === "suggested" && mapRow.resource_id
+    const reg = o.resource_id ? esc(resName(o.resource_id)) + ((resOf(o.resource_id) || {}).name_en ? ` <span class="muted" lang="en">(${esc(resOf(o.resource_id).name_en)})</span>` : "") + stockQualities(o, k === 0 ? s.slot_key : null) : mapRow && mapRow.status === "suggested" && mapRow.resource_id
       ? `<span class="bpunk">À valider : ${esc(resName(mapRow.resource_id))}</span>${isAdmin() ? ` <button type="button" class="linkbtn" data-okmap="${esc(o.api_uuid)}" data-res="${esc(mapRow.resource_id)}">Valider</button>` : ""}`
       : `<span class="muted">Aucune</span>${isAdmin() ? ' <button type="button" class="linkbtn" data-gomap>Choisir…</button>' : ""}`;
     const st_ = o.status === "alternative" ? '<span class="muted">alternative</span>' : o.status === "ok" ? '<span class="bpok">0</span>'
@@ -2996,6 +3003,12 @@ $("#bpQall").addEventListener("change", () => {
   bp.qAllApplied = $("#bpQall").value; $("#bpQrange").value = $("#bpQall").value || 0; bp.target = {}; renderBpDetail();
 });
 $("#bpQreset").addEventListener("click", () => { $("#bpQall").value = bp.qAllApplied = ""; $("#bpQrange").value = 0; bp.target = {}; renderBpDetail(); });
+$("#bpIngBody").addEventListener("click", e => {
+  const b = e.target.closest("[data-setq]"); if (!b) return;
+  const key = b.dataset.setq, q = Math.max(0, Math.min(1000, Math.round(num(b.dataset.q))));
+  if (bp.target[key] === q) delete bp.target[key]; else bp.target[key] = q;   // deuxième clic : retour à la qualité par défaut
+  renderBpDetail();
+});
 $("#bpIngBody").addEventListener("change", e => {
   const i = e.target.closest("[data-tq]"); if (!i) return;
   if (i.value === "") delete bp.target[i.dataset.tq]; else bp.target[i.dataset.tq] = Math.max(0, Math.min(1000, Math.round(num(i.value))));

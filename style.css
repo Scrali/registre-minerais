@@ -320,3 +320,8 @@ input.needqty{border-color:var(--warn);background:color-mix(in srgb,var(--warn) 
 .ocrlearn summary{cursor:pointer;color:var(--muted)}
 .learn-list{margin:4px 0 0 18px;padding:0}
 .linkbtn{background:none;border:0;padding:0;color:var(--accent, #1b6f80);text-decoration:underline;cursor:pointer;font:inherit}
+/* Qualités en stock cliquables (blueprints) : remplissent « Qualité visée » */
+button.lot.qpick{border:1px solid transparent;cursor:pointer;color:inherit}
+button.lot.qpick:hover{border-color:var(--accent)}
+button.lot.qpick:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.lot.chosen{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
