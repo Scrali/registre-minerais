@@ -1484,6 +1484,25 @@ function lineKeepCols(bmp, line) {
   const n = keep.reduce((a, v) => a + v, 0);
   return n >= lw * 0.25 ? keep : null;
 }
+// Contenu lu seul dans son étiquette olive (« 0.001 SCU »). Écran vu de biais : l'étiquette est plus haute ou plus
+// basse que le nom, on la cherche donc au-dessus et en dessous de la ligne. Texte brut, ou "" si introuvable.
+async function readOliveText(bmp, line) {
+  const x0 = Math.round(line.x + line.w * 0.45), y0 = Math.max(0, Math.round(line.y - line.h)), w = Math.min(bmp.width - x0, Math.round(line.w * 0.75)), h = Math.min(bmp.height - y0, Math.round(line.h * 3));
+  if (w < 10 || h < 10) return "";
+  const c = document.createElement("canvas"); c.width = w; c.height = h;
+  const g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(bmp, x0, y0, w, h, 0, 0, w, h);
+  const d = g.getImageData(0, 0, w, h).data, rows = new Int32Array(h), cols = new Int32Array(w);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (isOlive(d, (y * w + x) * 4, true)) { rows[y]++; cols[x]++; }
+  let top = -1, bot = -1, lft = -1, rgt = -1;
+  for (let y = 0; y < h; y++) if (rows[y] >= w * 0.04) { if (top < 0) top = y; bot = y; }
+  for (let x = 0; x < w; x++) if (cols[x] >= (bot - top + 1) * 0.3) { if (lft < 0) lft = x; rgt = x; }
+  if (top < 0 || lft < 0 || bot - top < line.h * 0.3 || rgt - lft < line.h) return "";
+  const pad = Math.round((bot - top) * 0.15), box = { x: x0 + lft - pad, y: y0 + top - pad, w: rgt - lft + 2 * pad, h: bot - top + 2 * pad };
+  const wk = await ocrWorker();
+  await wk.setParameters({ tessedit_pageseg_mode: "7", tessedit_char_whitelist: "0123456789.,SCUscuµm " });
+  const { data } = await wk.recognize(ocrCanvas(bmp, box, Math.max(1, Math.min(8, 60 / box.h))));
+  return String(data.text || "").trim();
+}
 // Qualité lue seule dans sa petite case gris-vert de l'infobulle (entre l'étiquette du nom et le contenu). Plus fiable
 // que la ligne entière, surtout quand l'infobulle passe sur un minerai blanc (quartz). null si la case n'est pas trouvée.
 async function readQualityBox(bmp, line) {
@@ -1814,7 +1833,16 @@ async function readTooltipBitmap(bmp, line, fallback) {
     let { data } = await w.recognize(ocrCanvas(bmp, line, scale));
     found = OcrLogic.parseTooltip(data.text);
     // Illisible : nouvel essai en ne gardant que les étiquettes (fond transparent ignoré, utile sur le quartz).
+    const firstText = String(data.text || "");
     if (!found) { const keep = lineKeepCols(bmp, line); if (keep) { ({ data } = await w.recognize(ocrCanvas(bmp, line, scale, keep))); found = OcrLogic.parseTooltip(data.text); } }
+    // Toujours illisible (écran vu de biais : le contenu sort de la ligne) : nom lu au début de la ligne, qualité dans
+    // sa case, contenu dans son étiquette, puis relus ensemble.
+    if (!found) {
+      const nm = (firstText.match(/^\s*([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ' -]{1,40}?(?:\s*[(\[]\s*(?:M|Ore|Raw)\s*[)\]])?)\s+\d/) || [])[1];
+      const q = nm ? await readQualityBox(bmp, line).catch(() => null) ?? +(firstText.match(/\s(\d{1,4})\b/) || [])[1] : null;
+      const qt = nm && q != null ? await readOliveText(bmp, line) : "";
+      if (qt) { found = OcrLogic.parseTooltip(`${nm} ${q} ${qt}`); if (found) { found.confidence = Math.min(0.69, (data.confidence || 0) / 100); olog(`infobulle lue en trois parties : ${nm} · ${q} · ${qt}`); } }
+    }
     if (found) found.confidence = (data.confidence || 0) / 100;
     const p = document.createElement("canvas"); p.width = Math.min(320, line.w); p.height = Math.round(line.h * p.width / line.w);
     p.getContext("2d").drawImage(bmp, line.x, line.y, line.w, line.h, 0, 0, p.width, p.height);
@@ -1957,30 +1985,35 @@ function olog(t) { ocrLog.push(new Date().toLocaleTimeString("fr-FR") + " " + t)
 // Compteurs « SÉLECTIONNÉ : N » des panneaux du jeu : ils augmentent exactement de 1 à chaque clic sur une caisse,
 // ne sont jamais cachés par l'infobulle et ne bougent pas au défilement. Repérés une fois par OCR sur le haut de l'image.
 async function findSelCounters(bmp) {
-  const w = await ocrWorker(), top = Math.round(bmp.height * 0.4), scale = 2;
-  const c = document.createElement("canvas"); c.width = bmp.width * scale; c.height = top * scale;
-  const g = c.getContext("2d"); g.drawImage(bmp, 0, 0, bmp.width, top, 0, 0, c.width, c.height);
+  // 4K : d'abord sans agrandissement (rapide) ; s'il manque un compteur, on recommence agrandi (plus lent, rare).
+  const w = await ocrWorker(), top = Math.round(bmp.height * 0.4), out = [];
   await w.setParameters({ tessedit_pageseg_mode: "11", tessedit_char_whitelist: "" });
-  const out = [];
-  const collect = words => { for (const wd of words || []) {
-    if (!/S.?L.?CT.?ONN/i.test(wd.text || "") || /NER|TOUT/i.test(wd.text || "")) continue;   // pas les boutons « Tout sélectionner »
-    const b = wd.bbox, h = (b.y1 - b.y0) / scale;
-    const r = { x: Math.max(0, Math.round(b.x0 / scale - h * 0.3)), y: Math.max(0, Math.round(b.y0 / scale - h * 0.3)),
-                w: Math.round((b.x1 - b.x0) / scale + h * 5), h: Math.round(h * 1.6) };
-    if (!out.some(o => Math.abs(o.x - r.x) < h * 3 && Math.abs(o.y - r.y) < h * 2)) out.push(r);
-  } };
-  collect((await w.recognize(c)).data.words);
-  // Écran sombre, éclairage différent ou vu de biais : texte clair isolé en noir sur blanc, à plusieurs seuils.
-  if (!out.length) {
-    const g2 = c.getContext("2d", { willReadFrequently: true }), src = g2.getImageData(0, 0, c.width, c.height);
-    for (const thr of [140, 110, 170]) {
-      const im = new ImageData(new Uint8ClampedArray(src.data), c.width, c.height), d = im.data;
-      for (let i = 0; i < d.length; i += 4) { const l = Math.max(d[i], d[i + 1], d[i + 2]); d[i] = d[i + 1] = d[i + 2] = l > thr ? 0 : 255; }
-      g2.putImageData(im, 0, 0);
-      collect((await w.recognize(c)).data.words);
-      if (out.length >= 2) break;
+  const pass = async scale => {
+    const c = document.createElement("canvas"); c.width = bmp.width * scale; c.height = top * scale;
+    const g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(bmp, 0, 0, bmp.width, top, 0, 0, c.width, c.height);
+    const collect = words => { for (const wd of words || []) {
+      if (!/S.?L.?CT.?ONN/i.test(wd.text || "") || /NER|TOUT/i.test(wd.text || "")) continue;   // pas les boutons « Tout sélectionner »
+      const b = wd.bbox, h = (b.y1 - b.y0) / scale;
+      const r = { x: Math.max(0, Math.round(b.x0 / scale - h * 0.3)), y: Math.max(0, Math.round(b.y0 / scale - h * 0.3)),
+                  w: Math.round((b.x1 - b.x0) / scale + h * 5), h: Math.round(h * 1.6) };
+      if (!out.some(o => Math.abs(o.x - r.x) < h * 3 && Math.abs(o.y - r.y) < h * 2)) out.push(r);
+    } };
+    collect((await w.recognize(c)).data.words);
+    // Écran sombre, éclairage différent ou vu de biais : texte clair isolé en noir sur blanc, à plusieurs seuils.
+    if (out.length < 2) {
+      const src = g.getImageData(0, 0, c.width, c.height);
+      for (const thr of [140, 110, 170]) {
+        const im = new ImageData(new Uint8ClampedArray(src.data), c.width, c.height), d = im.data;
+        for (let i = 0; i < d.length; i += 4) { const l = Math.max(d[i], d[i + 1], d[i + 2]); d[i] = d[i + 1] = d[i + 2] = l > thr ? 0 : 255; }
+        g.putImageData(im, 0, 0);
+        collect((await w.recognize(c)).data.words);
+        if (out.length >= 2) break;
+      }
     }
-  }
+  };
+  const big = bmp.width >= 2500;
+  await pass(big ? 1 : 2);
+  if (big && out.length < 2) await pass(2);
   return out;
 }
 function counterCanvas(bmp, r, forSig, boost = 1) {
@@ -2041,7 +2074,8 @@ async function frameTooltip(bmp, shot, fs, at) {
       fs.diag.frames++; if (line) fs.diag.tips++; fs.diag.counters = fs.counters.map(c => c.n).join(" / ");
       // Compteurs illisibles depuis plusieurs images (la vue a bougé, l'écran du jeu s'est déplacé) : ils sont
       // recherchés de nouveau, au plus toutes les 5 s ; la dernière valeur connue est gardée.
-      if (fs.counters.some(c => (c.fail || 0) >= 6) && !(at - (fs.relocAt || 0) < 5000)) {
+      // Tous illisibles : la vue a bougé (un seul compteur difficile à lire ne justifie pas une recherche, qui ralentit).
+      if (fs.counters.every(c => (c.fail || 0) >= 6) && !fs.pending && !(at - (fs.relocAt || 0) < 15000)) {
         fs.relocAt = at; fs.counterBusy = true;
         try {
           const regs = await findSelCounters(bmp);
@@ -2061,7 +2095,8 @@ async function frameTooltip(bmp, shot, fs, at) {
         // Valeur retenue : confirmée par les deux lectures, ou lue une seule fois si c'est une hausse plausible (+1 à +3).
         const [v1, v2] = await readSelCounter(bmp, c.r);
         // Après des lectures ratées (vue qui bouge), une seule lecture ne suffit plus : les deux doivent concorder.
-        const one = v1 ?? v2, plausible = v => v != null && c.n != null && v > c.n && v <= c.n + 3 && !c.fail;
+        // Une seule lecture n'est retenue que pour +1 (un clic) ; +2 ou +3 demandent deux lectures identiques (« 1 » lu « 3 »).
+        const one = v1 ?? v2, plausible = v => v != null && c.n != null && v === c.n + 1 && !c.fail;
         const n = v1 != null && v1 === v2 ? v1 : (v1 == null) !== (v2 == null) && (plausible(one) || c.n == null) ? one : null;
         c.fail = n == null ? (c.fail || 0) + 1 : 0;
         olog(`compteur ${c.r.x},${c.r.y} : ${c.n ?? "?"} -> ${n ?? `ignoré (${v1 ?? "?"}/${v2 ?? "?"})`}`);
