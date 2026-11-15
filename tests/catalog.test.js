@@ -81,3 +81,18 @@ test("Apprentissage : noms et chiffres enregistrés par les membres, lus par l'o
   await rpc(db, admin, "forget_ocr", [id]);
   assert.equal((await db.query(`select count(*)::int n from ocr_learning where kind = 'name'`)).rows[0].n, 0);
 });
+
+test("Apprentissage par contexte (019) : qualité, contenu SCU, compteur ; 40 exemples par contexte et par chiffre", async () => {
+  const sample = { aspect: 0.6, grid: Array(96).fill(0.2) };
+  const n = await rpc(db, m1, "learn_ocr", [JSON.stringify([
+    { kind: "glyph", ctx: "q", value: "6", sample }, { kind: "glyph", ctx: "scu", value: "0", sample },
+    { kind: "glyph", ctx: "ctr", value: "1", sample }, { kind: "glyph", value: "3", sample },
+    { kind: "glyph", ctx: "autre", value: "1", sample },   // contexte inconnu : ignoré
+  ])]);
+  assert.equal(n, 4);
+  const rows = (await db.query(`select ctx, value from ocr_learning where kind = 'glyph' and value in ('6','0','1','3') and sample->>'aspect' = '0.6' order by ctx`)).rows;
+  assert.deepEqual(rows.map(r => r.ctx + r.value), ["ctr1", "q6", "scu0", "x3"]);
+  await rpc(db, m1, "learn_ocr", [JSON.stringify(Array.from({ length: 45 }, () => ({ kind: "glyph", ctx: "ctr", value: "7", sample })))]);
+  const per = Object.fromEntries((await db.query(`select ctx, count(*)::int n from ocr_learning where kind = 'glyph' and value = '7' group by ctx`)).rows.map(r => [r.ctx, r.n]));
+  assert.deepEqual(per, { x: 40, ctr: 40 }, "la limite s'applique séparément à chaque contexte");
+});

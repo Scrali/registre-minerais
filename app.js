@@ -1328,6 +1328,8 @@ function renderReview() {
       if (it.dup) warn.push('<span class="tag warn" title="La même suite de cases termine la page précédente : cette case est sans doute déjà comptée">Déjà vue page précédente ?</span>');
       if (it.confidence != null && it.confidence < 0.7) warn.push('<span class="tag warn" title="L\'IA n\'est pas sûre de cette lecture">Lecture incertaine</span>');
       if (it.learned) warn.push('<span class="tag" title="Ce nom lu a déjà été rattaché à cette ressource dans un relevé enregistré">Reconnu grâce à l\'historique</span>');
+      if (it.ocr && it.why && !it.edited) warn.push(it.sure ? `<span class="tag ok" title="Lecture nette, sans hésitation${it.fromHistory ? " (chiffres confirmés par l'historique)" : ""}">Sûre</span>`
+        : `<span class="tag warn" title="${esc(it.why.join(" · "))}">À vérifier</span><span class="muted" style="font-size:11px;display:block">${esc(it.why.join(" · "))}</span>`);
       if (it.by === "couleur") warn.push('<span class="tag" title="Le nom n\'était pas lisible : reconnu par l\'apparence du caillou">Reconnu par l\'apparence</span>');
       const extra = many ? `<span class="rv-acts"><button type="button" class="linkbtn" data-split="${i}" title="Ce caillou n'est pas le même minerai que les autres du groupe : le nommer à part">Séparer</button></span>`
         : `${it.color ? `<div class="colordesc">${esc(it.color)}</div>` : ""}${refBtns(i)}`;
@@ -1486,9 +1488,9 @@ function lineKeepCols(bmp, line) {
 }
 // Contenu lu seul dans son étiquette olive (« 0.001 SCU »). Écran vu de biais : l'étiquette est plus haute ou plus
 // basse que le nom, on la cherche donc au-dessus et en dessous de la ligne. Texte brut, ou "" si introuvable.
-async function readOliveText(bmp, line) {
+function oliveBox(bmp, line) {
   const x0 = Math.round(line.x + line.w * 0.45), y0 = Math.max(0, Math.round(line.y - line.h)), w = Math.min(bmp.width - x0, Math.round(line.w * 0.75)), h = Math.min(bmp.height - y0, Math.round(line.h * 3));
-  if (w < 10 || h < 10) return "";
+  if (w < 10 || h < 10) return null;
   const c = document.createElement("canvas"); c.width = w; c.height = h;
   const g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(bmp, x0, y0, w, h, 0, 0, w, h);
   const d = g.getImageData(0, 0, w, h).data, rows = new Int32Array(h), cols = new Int32Array(w);
@@ -1496,8 +1498,12 @@ async function readOliveText(bmp, line) {
   let top = -1, bot = -1, lft = -1, rgt = -1;
   for (let y = 0; y < h; y++) if (rows[y] >= w * 0.04) { if (top < 0) top = y; bot = y; }
   for (let x = 0; x < w; x++) if (cols[x] >= (bot - top + 1) * 0.3) { if (lft < 0) lft = x; rgt = x; }
-  if (top < 0 || lft < 0 || bot - top < line.h * 0.3 || rgt - lft < line.h) return "";
-  const pad = Math.round((bot - top) * 0.15), box = { x: x0 + lft - pad, y: y0 + top - pad, w: rgt - lft + 2 * pad, h: bot - top + 2 * pad };
+  if (top < 0 || lft < 0 || bot - top < line.h * 0.3 || rgt - lft < line.h) return null;
+  const pad = Math.round((bot - top) * 0.15);
+  return { x: x0 + lft - pad, y: y0 + top - pad, w: rgt - lft + 2 * pad, h: bot - top + 2 * pad };
+}
+async function readOliveText(bmp, line) {
+  const box = oliveBox(bmp, line); if (!box) return "";
   const wk = await ocrWorker();
   await wk.setParameters({ tessedit_pageseg_mode: "7", tessedit_char_whitelist: "0123456789.,SCUscuµm " });
   const { data } = await wk.recognize(ocrCanvas(bmp, box, Math.max(1, Math.min(8, 60 / box.h))));
@@ -1527,6 +1533,11 @@ async function readQualityBox(bmp, line) {
   for (let y = 0; y < lh; y++) { let n = 0; for (let xx = bx0; xx <= bx1; xx++) if (boxPx((y * lw + xx) * 4)) n++; if (n >= (bx1 - bx0 + 1) * 0.25) { if (y < by0) by0 = y; by1 = y; } }
   if (by1 - by0 < lh * 0.35) return null;
   const box = { x: lx + bx0, y: ly + by0, w: bx1 - bx0 + 1, h: by1 - by0 + 1 };
+  // Formes des chiffres (apprentissage) ; lecture d'après les exemples appris quand elle est nette.
+  const G = textGlyphs(bmp, box, true, 40);
+  readQualityBox.glyphs = G && G.glyphs.length <= 4 ? G.glyphs.map(k => glyphSample(k, G.cw)) : null;
+  const shape = G && G.glyphs.length <= 4 ? shapeRead(G.glyphs, G.cw, "q") : null;
+  readQualityBox.byShape = false;
   const wk = await ocrWorker(), reads = [];
   for (const off of [40, 25, 60]) {
     const scale = Math.max(1, Math.min(10, 70 / box.h)), o = document.createElement("canvas");
@@ -1545,7 +1556,12 @@ async function readQualityBox(bmp, line) {
   }
   // Majorité des lectures ; sans majorité, rien.
   const cnt = v => reads.filter(r => r === v).length, best = reads.slice().sort((a, b) => cnt(b) - cnt(a))[0];
-  return best != null && cnt(best) * 2 > reads.length ? best : null;
+  const tess = best != null && cnt(best) * 2 > reads.length ? best : null;
+  if (shape != null && +shape <= 1000) {
+    if (+shape !== tess) { olog(`qualité ${shape} d'après l'historique (lecture : ${tess ?? "?"})`); readQualityBox.byShape = true; }
+    return +shape;
+  }
+  return tess;
 }
 // Gemmes : le nombre est le « X N » en haut à droite de la case survolée. L'infobulle s'ouvre au curseur, donc ce coin
 // est juste au-dessus et à droite du coin haut-gauche de l'infobulle. On garde le premier « X N » à droite du curseur.
@@ -1610,7 +1626,7 @@ function classifyGlyph(k, cw) {
   const dist = (grid, aspect) => { let t = 0; for (let i = 0; i < 96; i++) t += Math.abs(s.grid[i] - grid[i]); return t / 96 + Math.abs(s.aspect - aspect) * 0.5; };
   for (const [d, [a, enc]] of Object.entries(GEM_DIGITS)) best[d] = dist(Array.from(enc, c => parseInt(c, 16) / 15), a);
   for (const l of st.learn || []) {
-    if (l.kind !== "glyph" || !l.sample || !Array.isArray(l.sample.grid) || l.sample.grid.length !== 96) continue;
+    if (l.kind !== "glyph" || (l.ctx || "x") !== "x" || !l.sample || !Array.isArray(l.sample.grid) || l.sample.grid.length !== 96) continue;
     const v = dist(l.sample.grid, Number(l.sample.aspect) || 0);
     if (!(l.value in best) || v < best[l.value]) { best[l.value] = v; fromLearn[l.value] = true; }
   }
@@ -1618,6 +1634,53 @@ function classifyGlyph(k, cw) {
   // Presque identique à un exemple appris de cet écran, et nettement différent des autres chiffres : lecture sûre.
   classifyGlyph.strong = !!fromLearn[r[0][0]] && r[0][1] < 0.1 && (r.length < 2 || r[1][1] - r[0][1] >= 0.05);
   return r[0][1] < 0.3 && (r.length < 2 || r[1][1] - r[0][1] >= 0.03) ? r[0][0] : null;
+}
+// Caractères d'un texte dans une zone (source : image ou canevas). light : texte clair sur fond sombre (infobulle),
+// sinon texte foncé sur fond clair (compteur binarisé). Les petits morceaux (point, deux-points) sont ignorés.
+function textGlyphs(src, box, light, off = 40) {
+  const scale = Math.max(1, Math.min(10, 80 / box.h)), cw = Math.round(box.w * scale), ch = Math.round(box.h * scale);
+  if (cw < 8 || ch < 8) return null;
+  const c = document.createElement("canvas"); c.width = cw; c.height = ch;
+  const g = c.getContext("2d", { willReadFrequently: true }); g.imageSmoothingEnabled = true; g.drawImage(src, box.x, box.y, box.w, box.h, 0, 0, cw, ch);
+  const d = g.getImageData(0, 0, cw, ch).data, L = new Float32Array(cw * ch); let sum = 0;
+  for (let p = 0; p < cw * ch; p++) { L[p] = 0.3 * d[p * 4] + 0.59 * d[p * 4 + 1] + 0.11 * d[p * 4 + 2]; sum += L[p]; }
+  const mean = sum / (cw * ch), on = new Uint8Array(cw * ch);
+  for (let p = 0; p < cw * ch; p++) if (light ? L[p] > mean + off : L[p] < Math.min(128, mean - off)) on[p] = 1;
+  const stack = new Int32Array(cw * ch), comps = [];
+  for (let p0 = 0; p0 < cw * ch; p0++) {
+    if (on[p0] !== 1) continue;
+    let sp = 0, x0 = cw, x1 = 0, y0 = ch, y1 = 0, edge = false; const px = []; stack[sp++] = p0; on[p0] = 2;
+    while (sp) { const p = stack[--sp], x = p % cw, y = (p - x) / cw; px.push(p);
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+      if (y === 0 || y === ch - 1) edge = true;
+      for (const q of [x > 0 ? p - 1 : -1, x < cw - 1 ? p + 1 : -1, y > 0 ? p - cw : -1, y < ch - 1 ? p + cw : -1]) if (q >= 0 && on[q] === 1) { on[q] = 2; stack[sp++] = q; } }
+    if (edge || y1 - y0 + 1 < ch * 0.3 || px.length < ch * 0.5) continue;
+    comps.push({ x0, x1, y0, y1, px });
+  }
+  comps.sort((a, b) => a.x0 - b.x0);
+  const glyphs = [];
+  for (const k of comps) { const last = glyphs[glyphs.length - 1];
+    if (last && k.x0 < last.x1 - (k.x1 - k.x0) * 0.5) { last.x1 = Math.max(last.x1, k.x1); last.y0 = Math.min(last.y0, k.y0); last.y1 = Math.max(last.y1, k.y1); last.px.push(...k.px); }
+    else glyphs.push({ ...k, px: k.px.slice() }); }
+  return glyphs.length ? { cw, glyphs } : null;
+}
+const glyphSample = (k, cw) => { const g = glyphGrid(k, cw); return { aspect: +g.aspect.toFixed(3), grid: g.grid.map(v => +v.toFixed(2)) }; };
+// Chiffres lus d'après les seuls exemples appris d'un contexte (« q » qualité de l'infobulle, « scu » contenu,
+// « ctr » compteur Sélectionné). Renvoie la suite de chiffres seulement si chaque chiffre est nettement reconnu.
+function shapeRead(glyphs, cw, ctx) {
+  const learned = (st.learn || []).filter(l => l.kind === "glyph" && l.ctx === ctx && l.sample && Array.isArray(l.sample.grid) && l.sample.grid.length === 96);
+  if (!learned.length || !glyphs || !glyphs.length) return null;
+  let out = "";
+  for (const k of glyphs) {
+    const s = glyphGrid(k, cw), best = {};
+    for (const l of learned) { let t = 0; for (let i = 0; i < 96; i++) t += Math.abs(s.grid[i] - l.sample.grid[i]); const v = t / 96 + Math.abs(s.aspect - (Number(l.sample.aspect) || 0)) * 0.5;
+      if (!(l.value in best) || v < best[l.value]) best[l.value] = v; }
+    const r = Object.entries(best).sort((a, b) => a[1] - b[1]);
+    const sure = r[0][1] < (r.length < 2 ? 0.08 : 0.1) && (r.length < 2 || r[1][1] - r[0][1] >= 0.05);
+    if (!sure) return null;
+    out += r[0][0];
+  }
+  return out;
 }
 // Caractères recopiés espacés sur fond blanc (repli : lecture par Tesseract).
 function glyphsCanvas(G) {
@@ -1676,7 +1739,7 @@ function sameCellQuality(read, quality) {
   return r === q;   // aucun autre écart toléré : deux cases voisines ont souvent des qualités proches (274 / 294)
 }
 async function readGemCount(bmp, line, quality, alt) {
-  readGemCount.matched = null;
+  readGemCount.matched = null; readGemCount.elim = false; readGemCount.split = false; readGemCount.qualityConfirmed = false;
   const W = bmp.width, H = bmp.height, cellW = W * 0.095, cellH = H * 0.16;
   const tipX = line.x - line.h * 0.8, tipY = line.y - line.h * 2.5;
   // Zone large : près du bord droit de la liste, le jeu ouvre l'infobulle à GAUCHE de la souris. La souris peut donc
@@ -1772,7 +1835,7 @@ async function readGemCount(bmp, line, quality, alt) {
     const unreadIn = unread.filter(b => inCell0(b, tipX) || inCell0(b, tipR0));
     // (pas quand la qualité elle-même est incertaine : deux lectures différentes)
     if (!hits.length && unreadIn.length === 1 && valid.length > 1 && alt == null) {
-      hits.push(unreadIn[0]); olog("gemme : case retenue par élimination (sa qualité est illisible, les autres ne correspondent pas)");
+      hits.push(unreadIn[0]); readGemCount.elim = true; olog("gemme : case retenue par élimination (sa qualité est illisible, les autres ne correspondent pas)");
     }
     // Plusieurs cases de même qualité : on garde celles qui contiennent la souris, que l'infobulle soit ouverte à
     // droite de la souris (coin gauche de l'infobulle dans la case) ou à gauche (coin droit dans la case).
@@ -1816,6 +1879,8 @@ async function readGemCount(bmp, line, quality, alt) {
   // Plusieurs lectures : on garde le nombre lu en majorité. Sans majorité nette, rien n'est inventé (nombre à saisir).
   const n = v => votes.filter(x => x === v).length, best = votes.slice().sort((a, b) => n(b) - n(a))[0];
   olog(`gemme : qualités des cases lues ${seen.map(q => q ?? "?").join(", ") || "-"} · étiquettes ${valid.map(b => `${b.x},${b.y}`).join(" ") || "-"} (infobulle ${quality ?? "?"}) · ${cands.length} étiquette(s) « X N » trouvée(s)${cb ? ` (retenue : ${cb.x},${cb.y} ${cb.w}×${cb.h})` : " (aucune retenue)"} · lectures : ${votes.join(", ") || "aucune"} · zone ${rx},${ry} ${rw}×${rh}`);
+  readGemCount.split = votes.some(v => v !== best);
+  if (cb && cb.q != null && !readGemCount.elim) readGemCount.qualityConfirmed = true;
   return best != null && n(best) * 2 > votes.length ? best : null;
 }
 async function readTooltip(file) {
@@ -1841,9 +1906,9 @@ async function readTooltipBitmap(bmp, line, fallback) {
       const nm = (firstText.match(/^\s*([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ' -]{1,40}?(?:\s*[(\[]\s*(?:M|Ore|Raw)\s*[)\]])?)\s+\d/) || [])[1];
       const q = nm ? await readQualityBox(bmp, line).catch(() => null) ?? +(firstText.match(/\s(\d{1,4})\b/) || [])[1] : null;
       const qt = nm && q != null ? await readOliveText(bmp, line) : "";
-      if (qt) { found = OcrLogic.parseTooltip(`${nm} ${q} ${qt}`); if (found) { found.confidence = Math.min(0.69, (data.confidence || 0) / 100); olog(`infobulle lue en trois parties : ${nm} · ${q} · ${qt}`); } }
+      if (qt) { found = OcrLogic.parseTooltip(`${nm} ${q} ${qt}`); if (found) { found.threePart = true; olog(`infobulle lue en trois parties : ${nm} · ${q} · ${qt}`); } }
     }
-    if (found) found.confidence = (data.confidence || 0) / 100;
+    if (found) found.confidence = found.threePart ? Math.min(0.69, (data.confidence || 0) / 100) : (data.confidence || 0) / 100;
     const p = document.createElement("canvas"); p.width = Math.min(320, line.w); p.height = Math.round(line.h * p.width / line.w);
     p.getContext("2d").drawImage(bmp, line.x, line.y, line.w, line.h, 0, 0, p.width, p.height);
     proof = p.toDataURL("image/jpeg", 0.85);
@@ -1858,9 +1923,28 @@ async function readTooltipBitmap(bmp, line, fallback) {
   if (found && line) {
     // Qualité : celle de sa petite case quand elle est lisible (la ligne entière lisait parfois 74 pour 742).
     // Les deux lectures diffèrent : celle de la case est gardée, l'autre reste possible (vérifiée sur la grille pour une gemme).
-    try { const q = await readQualityBox(bmp, line); if (q != null) { if (q !== found.quality) { olog(`qualité : ${q} dans sa case (ligne entière : ${found.quality})`); found.qualityAlt = found.quality; } found.quality = q; } } catch (_) {}
+    try { const q = await readQualityBox(bmp, line); found.qGlyphs = readQualityBox.glyphs;
+      if (q != null) { if (q !== found.quality) { olog(`qualité : ${q} dans sa case (ligne entière : ${found.quality})`); if (!readQualityBox.byShape) found.qualityAlt = found.quality; } found.quality = q; found.qByShape = readQualityBox.byShape; } } catch (_) {}
     const nm = found.name.replace(/\s*\((?:M|Ore|Raw)\)\s*$/i, "").trim();
-    if (isGem(matchTarget(nm), nm)) { try { found.count = await readGemCount(bmp, line, found.quality, found.qualityAlt); found.glyphs = readGemCount.glyphs; if (readGemCount.matched != null) found.quality = readGemCount.matched; } catch (_) { found.count = null; } }
+    if (isGem(matchTarget(nm), nm)) { try { found.count = await readGemCount(bmp, line, found.quality, found.qualityAlt); found.glyphs = readGemCount.glyphs; found.gemElim = readGemCount.elim; found.gemSplit = readGemCount.split;
+      if (readGemCount.matched != null) found.quality = readGemCount.matched; if (readGemCount.matched != null || readGemCount.qualityConfirmed) found.qualityAlt = null; } catch (_) { found.count = null; } }
+    else {
+      // Contenu en SCU : formes des chiffres de l'étiquette olive (apprentissage) et correction d'après l'historique.
+      try {
+        const m = String(found.line || "").match(/(\d+(?:[.,]\d+)?)\s*(µ\s?SC|[cmu]?\s?SC)[UVY]/i), ob = m && oliveBox(bmp, line);
+        const G = ob && textGlyphs(bmp, ob, true, 40), digits = m ? m[1].replace(/\D/g, "") : "", unitLen = m ? m[2].replace(/\s/g, "").length + 1 : 0;
+        if (G && G.glyphs.length === digits.length + unitLen) {
+          const dg = G.glyphs.slice(0, digits.length);
+          found.scuGlyphs = dg.map(k => glyphSample(k, G.cw)); found.scuText = m[1]; found.scuUnit = m[2].replace(/\s/g, "") + "U";
+          const sh = shapeRead(dg, G.cw, "scu");
+          if (sh && sh !== digits) {
+            let k = 0; const fixed = m[1].replace(/\d/g, () => sh[k++]);
+            const re = OcrLogic.parseTooltip(`X 1 ${fixed} ${found.scuUnit}`);
+            if (re) { olog(`contenu ${fixed} d'après l'historique (lecture : ${m[1]})`); found.qty = re.qty; found.qtyByShape = true; found.scuText = fixed; }
+          }
+        }
+      } catch (_) {}
+    }
   }
   return found ? { ...found, proof } : null;
 }
@@ -1892,15 +1976,27 @@ function pushOcrItem(r, s, at, windowMs) {
   const raw = r.name.replace(/\s*\((?:M|Ore|Raw)\)\s*$/i, "").trim(), name = gemSpelling(raw);
   const it = { name, quality: String(r.quality), qty: r.qty, unit: "SCU", color: "", hex: "", by: "nom", on: true, target: matchTarget(name),
     shot: s.id, crop: null, proof: r.proof, box: null, confidence: r.confidence ?? null, group: norm(name), ocr: true,
-    readName: norm(raw), readCount: r.count ?? null, glyphs: r.glyphs || null };
+    readName: norm(raw), readCount: r.count ?? null, glyphs: r.glyphs || null,
+    qGlyphs: r.qGlyphs || null, readQuality: r.quality, scuGlyphs: r.scuGlyphs || null, scuText: r.scuText || "", scuUnit: r.scuUnit || "" };
   // Rattaché grâce à un relevé précédent (apprentissage) : signalé dans le tableau.
   if (it.target !== "new" && !st.resources.some(x => norm(x.name) === norm(name) || (x.name_en && norm(x.name_en) === norm(name))) && learnedTarget(name) === it.target) it.learned = true;
   it.autoTarget = it.target;
+  // Niveau de confiance : « à vérifier » avec les raisons, sinon « sûre ».
+  const why = [];
+  if (r.threePart) why.push("infobulle lue en trois parties (écran vu de biais)");
+  if (r.qualityAlt != null) why.push(`qualité : ${r.quality} dans sa case, ${r.qualityAlt} sur la ligne`);
+  if (r.confidence != null && r.confidence < 0.7) why.push("texte peu net");
+  if (it.target === "new") why.push("nom inconnu du catalogue");
+  else if (name !== raw || (!it.learned && !st.resources.some(x => norm(x.name) === norm(name) || (x.name_en && norm(x.name_en) === norm(name))))) why.push("nom corrigé à une lettre près");
+  if (r.gemElim) why.push("case du nombre retenue par élimination");
+  if (r.gemSplit) why.push("lectures du nombre pas toutes d'accord");
+  it.why = why; it.fromHistory = !!(r.qByShape || r.qtyByShape);
   const prev = st.items.find(x => x.group === it.group);
   if (prev) { it.name = prev.name; it.target = prev.target; }
   // Gemme : l'infobulle donne un volume, pas un nombre. Le nombre (x1, x5…) affiché sur la case est à saisir.
   // Gemme : nombre lu sur la case (« X 8 ») ; s'il n'a pas pu être lu, il est à saisir.
-  if (isGem(it.target, name)) { it.unit = ""; it.gem = true; if (r.count > 0) { it.qty = r.count; it.needQty = false; } else { it.qty = ""; it.needQty = true; } }
+  if (isGem(it.target, name)) { it.unit = ""; it.gem = true; if (r.count > 0) { it.qty = r.count; it.needQty = false; } else { it.qty = ""; it.needQty = true; it.why.push("nombre à saisir"); } }
+  it.sure = !it.why.length;
   showLastRead(it);
   const read = { name, quality: r.quality, qty: r.qty, at };
   if (OcrLogic.sameRead(ocr.last, read, windowMs)) { it.on = false; it.dup = true; }
@@ -2041,6 +2137,20 @@ async function readSelCounter(bmp, r) {
     const m = first.replace(/[Oo](?=\d|\s*$)/g, "0").match(/(\d{1,3})\s*$/);
     vals.push(m ? +m[1] : null);
   }
+  // Chiffres du compteur par leur forme : les derniers caractères de la ligne (après « : »), d'après les exemples appris.
+  readSelCounter.glyphs = null; readSelCounter.shape = null;
+  try {
+    const cv = counterCanvas(bmp, r, false, 1), G = textGlyphs(cv, { x: 0, y: 0, w: cv.width, h: cv.height }, false, 40);
+    if (G) {
+      const hs = G.glyphs.map(k => k.y1 - k.y0), hmax = Math.max(...hs), num_ = [];
+      for (let i = G.glyphs.length - 1; i >= 0 && num_.length < 3; i--) {
+        const k = G.glyphs[i], prev = num_[0];
+        if (k.y1 - k.y0 < hmax * 0.6 || (prev && prev.x0 - k.x1 > hmax * 0.8)) break;
+        num_.unshift(k);
+      }
+      if (num_.length) { readSelCounter.glyphs = num_.map(k => glyphSample(k, G.cw)); readSelCounter.shape = shapeRead(num_, G.cw, "ctr"); }
+    }
+  } catch (_) {}
   return vals;
 }
 // Libère une image d'écran (4K : ~33 Mo) sauf si elle est encore gardée : infobulle d'avant le clic ou image de diagnostic.
@@ -2094,10 +2204,16 @@ async function frameTooltip(bmp, shot, fs, at) {
         c.sig = sig;
         // Valeur retenue : confirmée par les deux lectures, ou lue une seule fois si c'est une hausse plausible (+1 à +3).
         const [v1, v2] = await readSelCounter(bmp, c.r);
+        const sv = readSelCounter.shape != null ? +readSelCounter.shape : null, cg = readSelCounter.glyphs;
         // Après des lectures ratées (vue qui bouge), une seule lecture ne suffit plus : les deux doivent concorder.
         // Une seule lecture n'est retenue que pour +1 (un clic) ; +2 ou +3 demandent deux lectures identiques (« 1 » lu « 3 »).
-        const one = v1 ?? v2, plausible = v => v != null && c.n != null && v === c.n + 1 && !c.fail;
-        const n = v1 != null && v1 === v2 ? v1 : (v1 == null) !== (v2 == null) && (plausible(one) || c.n == null) ? one : null;
+        // Forme apprise des chiffres : départage deux lectures différentes, et confirme une lecture seule.
+        const one = v1 ?? v2, plausible = v => v != null && c.n != null && v === c.n + 1 && !c.fail && (sv == null || sv === v);
+        const n = v1 != null && v1 === v2 ? v1 : (v1 == null) !== (v2 == null) && (plausible(one) || c.n == null) ? one
+          : sv != null && (sv === v1 || sv === v2) ? sv : null;
+        // Exemple sûr pour l'apprentissage : deux lectures identiques, exactement un de plus (un clic).
+        if (cg && v1 != null && v1 === v2 && c.n != null && v1 === c.n + 1 && String(v1).length === cg.length && (ocr.ctrSamples = ocr.ctrSamples || []).length < 30)
+          cg.forEach((g, i) => ocr.ctrSamples.push({ kind: "glyph", ctx: "ctr", value: String(v1)[i], sample: g, was_right: true }));
         c.fail = n == null ? (c.fail || 0) + 1 : 0;
         olog(`compteur ${c.r.x},${c.r.y} : ${c.n ?? "?"} -> ${n ?? `ignoré (${v1 ?? "?"}/${v2 ?? "?"})`}`);
         if (n == null) continue;
@@ -2486,14 +2602,27 @@ async function teachOcr() {
     if (it.readName) items.push({ kind: "name", seen: it.readName, resource_id: it.target, was_right: it.autoTarget === it.target });
     const q = num(it.qty), digits = Number.isInteger(q) && q > 0 ? String(q) : "";
     if (it.gem && it.glyphs && digits.length === it.glyphs.length)
-      it.glyphs.forEach((g, i) => items.push({ kind: "glyph", value: digits[i], sample: g, was_right: it.readCount === q }));
+      it.glyphs.forEach((g, i) => items.push({ kind: "glyph", ctx: "x", value: digits[i], sample: g, was_right: it.readCount === q }));
+    // Qualité de l'infobulle (case gris-vert).
+    const qs = /^\d{1,4}$/.test(String(it.quality)) ? String(+it.quality) : "";
+    if (it.qGlyphs && qs.length === it.qGlyphs.length)
+      it.qGlyphs.forEach((g, i) => items.push({ kind: "glyph", ctx: "q", value: qs[i], sample: g, was_right: String(it.readQuality) === qs }));
+    // Contenu en SCU (étiquette olive) : valeur enregistrée remise dans l'unité et la précision lues.
+    if (!it.gem && it.scuGlyphs && it.scuText && (it.unit || "SCU") === "SCU") {
+      const f = { SCU: 1, CSCU: 0.01, MSCU: 1e-6, USCU: 1e-6, "µSCU": 1e-6 }[it.scuUnit.toUpperCase()] || 1;
+      const dec = (it.scuText.split(/[.,]/)[1] || "").length, str = (num(it.qty) / f).toFixed(dec).replace(/\D/g, "");
+      if (str.length === it.scuGlyphs.length)
+        it.scuGlyphs.forEach((g, i) => items.push({ kind: "glyph", ctx: "scu", value: str[i], sample: g, was_right: str === it.scuText.replace(/\D/g, "") }));
+    }
   }
+  // Compteur « Sélectionné » : exemples sûrs relevés pendant la lecture (deux lectures identiques, +1 au clic).
+  for (const c of (ocr.ctrSamples || []).splice(0)) items.push(c);
   if (!items.length) return 0;
   try { const n = await rpc("learn_ocr", { p_items: items }); loadLearning(); return n || 0; }
   catch (err) { console.warn(err); return 0; }
 }
 async function loadLearning() {
-  const { data, error } = await sb.from("ocr_learning").select("id, kind, seen, value, resource_id, sample, was_right, hits, updated_at").order("updated_at", { ascending: false }).limit(2000);
+  const { data, error } = await sb.from("ocr_learning").select("*").order("updated_at", { ascending: false }).limit(2000);
   if (error) return;   // table absente (base pas encore migrée) : la lecture fonctionne sans apprentissage
   st.learn = data || [];
   renderLearning();
@@ -2501,12 +2630,13 @@ async function loadLearning() {
 function renderLearning() {
   const box = $("#ocrLearn"); if (!box) return;
   const names = (st.learn || []).filter(l => l.kind === "name"), glyphs = (st.learn || []).filter(l => l.kind === "glyph");
-  const per = {}; for (const g of glyphs) per[g.value] = (per[g.value] || 0) + 1;
+  const CTX = { x: "étiquettes « X N »", q: "qualité de l'infobulle", scu: "contenu en SCU", ctr: "compteur « Sélectionné »" };
+  const per = {}; for (const g of glyphs) { const c = g.ctx || "x"; (per[c] = per[c] || {})[g.value] = (per[c][g.value] || 0) + 1; }
   $("#ocrLearnSum").textContent = `Ce que le site a appris : ${names.length} nom${names.length > 1 ? "s" : ""}, ${glyphs.length} chiffre${glyphs.length > 1 ? "s" : ""}`;
   const corr = names.filter(l => !l.was_right || norm(l.value) !== l.seen);
   $("#ocrLearnBody").innerHTML =
     `<p class="muted">Appris uniquement des lignes enregistrées : corrections et lectures justes confirmées.</p>`
-    + `<p><b>Chiffres des étiquettes « X N »</b> : ${Object.keys(per).sort().map(d => `${d} (${per[d]})`).join(", ") || "aucun pour l'instant"}</p>`
+    + Object.entries(CTX).map(([c, l]) => `<p><b>Chiffres — ${l}</b> : ${Object.keys(per[c] || {}).sort().map(d => `${d} (${per[c][d]})`).join(", ") || "aucun pour l'instant"}</p>`).join("")
     + `<p><b>Noms lus rattachés à une ressource</b>${corr.length ? "" : " : aucun nom mal lu pour l'instant"}</p>`
     + (corr.length ? `<ul class="learn-list">${corr.map(l => `<li>« ${esc(l.seen)} » → ${esc(l.value)} <span class="muted">(×${l.hits})</span>${isAdmin() ? ` <button class="linkbtn" data-forget="${l.id}">Oublier</button>` : ""}</li>`).join("")}</ul>` : "");
 }
