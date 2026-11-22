@@ -325,3 +325,8 @@ button.lot.qpick{border:1px solid transparent;cursor:pointer;color:inherit}
 button.lot.qpick:hover{border-color:var(--accent)}
 button.lot.qpick:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .lot.chosen{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+/* Fabrication d'un blueprint */
+.bpcraft{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+.bpcraft #bpCraftPreview{flex-basis:100%}
+table.mini{width:auto;font-size:13px;margin:6px 0}
+table.mini td,table.mini th{padding:4px 10px}

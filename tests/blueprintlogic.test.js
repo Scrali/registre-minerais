@@ -94,3 +94,23 @@ test("Effet de la qualité : linéaire, par segments, et inconnu quand l'API ne 
   assert.equal(modifierAt({ value_range_type: null, quality_range: { min: null, max: null }, modifier_range: {} }, 500), null);
   assert.deepEqual(Object.keys(modifiersBySlot({ requirement_groups: [{ key: "FRAME", modifiers: [lin] }, { name: "Emitter", modifiers: [] }] })), ["FRAME", "Emitter"]);
 });
+
+test("Plan de fabrication : lots exacts à retirer, plus faible qualité suffisante d'abord, unité du stock conservée", () => {
+  const { craftPlan } = globalThis.BlueprintLogic;
+  const s = (resource_id, quality_key, quantity, unit, location_id) => ({ resource_id, quality_key, quantity, unit, location_id });
+  const stocks = [s("R-iron", "900", 1, "SCU", "L1"), s("R-iron", "300", 0.2, "SCU", "L1"), s("R-iron", "400", 10, "cSCU", "L2"),
+                  s("R-ice", "50", 1, "SCU", "L1")];
+  const p = craftPlan(quik, stocks, map, { crafts: 1 });
+  assert.equal(p.ok, true);
+  const by = Object.fromEntries(p.lines.map(l => [`${l.resource_id} Q${l.quality_key} ${l.location_id}`, [l.quantity, l.unit]]));
+  // Fer : 0,26 SCU = 0,2 (Q300) + 0,06 SCU pris au Q400 en cSCU (6 cSCU) ; le Q900 n'est pas touché.
+  assert.deepEqual(by, { "R-iron Q300 L1": [0.2, "SCU"], "R-iron Q400 L2": [6, "cSCU"], "R-ice Q50 L1": [0.16, "SCU"] });
+  assert.equal(p.lines.find(l => l.quality_key === "300").expected_before, 0.2);
+  // Qualité minimale visée : seuls les lots suffisants sont pris.
+  const hi = craftPlan(quik.map(i => ({ ...i, min_quality: 800 })), stocks, map).ok;
+  assert.equal(hi, false, "pas assez de glace Q800+ : rien n'est proposé");
+  const p2 = craftPlan(quik.map(i => i.api_uuid === IRON ? { ...i, min_quality: 800 } : i), stocks, map);
+  assert.deepEqual(p2.lines.filter(l => l.resource_id === "R-iron").map(l => [l.quality_key, l.quantity]), [["900", 0.26]]);
+  // Stock insuffisant : aucun plan.
+  assert.equal(craftPlan(quik, stocks, map, { crafts: 99 }).ok, false);
+});

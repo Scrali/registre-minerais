@@ -3055,6 +3055,53 @@ function stockQualities(o, slotKey) {
   return (chips ? `<div class="lots">${chips}</div>` : "") + (rest ? `<div class="colordesc">+ ${rest} non comptés (autre unité)</div>` : "")
     || '<div class="colordesc">rien en stock</div>';
 }
+// « J'ai fabriqué ×N » : plan calculé sur MES stocks seulement (jamais ceux d'un autre membre), aperçu, puis retrait
+// de tous les lots en une seule opération côté serveur.
+function myStocks() { const me = st.me && st.me.id; return st.stocks.filter(s => s.user_id === me && num(s.quantity) > 0); }
+function renderCraftBox(b, wanted, tier, crafts) {
+  const btn = $("#bpCraft"), hint = $("#bpCraftHint");
+  btn.textContent = `J'ai fabriqué ×${crafts}`;
+  if (bp.craftFor !== `${b.id}|${tier}|${crafts}|${JSON.stringify(bp.target)}|${$("#bpQall").value}`) { $("#bpCraftPreview").hidden = true; bp.craftPlan = null; }
+  const plan = wanted.length ? BlueprintLogic.craftPlan(wanted, myStocks(), bp.map, { tier, crafts }) : { ok: false, verdict: {} };
+  btn.disabled = !plan.ok;
+  hint.textContent = plan.ok ? "retire de tes stocks les lots utilisés (aperçu avant de confirmer)"
+    : !wanted.length ? "" : plan.verdict.craftable === null ? "impossible : certaines matières ne sont pas reliées au registre"
+    : "impossible avec tes propres stocks (les stocks des autres membres ne sont jamais retirés)";
+  bp.craftCalc = { b, wanted, tier, crafts, key: `${b.id}|${tier}|${crafts}|${JSON.stringify(bp.target)}|${$("#bpQall").value}` };
+}
+$("#bpCraft").addEventListener("click", async () => {
+  const c = bp.craftCalc; if (!c) return;
+  const plan = BlueprintLogic.craftPlan(c.wanted, myStocks(), bp.map, { tier: c.tier, crafts: c.crafts });
+  if (!plan.ok) return;
+  const box = $("#bpCraftPreview"); box.hidden = false; box.innerHTML = '<p class="muted">Calcul de l\'aperçu…</p>';
+  try {
+    const p = { blueprint_id: c.b.id, crafts: c.crafts, lines: plan.lines };
+    const r = await rpc("craft_blueprint", { p: { ...p, dry_run: true } });
+    bp.craftPlan = { ...p, operation_id: crypto.randomUUID() }; bp.craftFor = c.key;
+    box.innerHTML = `<p><b>Aperçu — fabrication ×${c.crafts} de ${esc(r.blueprint)}</b> : ces lots seront retirés de tes stocks (nature « Consommation »).</p>
+      <table class="mini"><thead><tr><th>Ressource</th><th>Qualité</th><th>Lieu</th><th class="num">Retrait</th><th class="num">Avant → après</th></tr></thead><tbody>
+      ${r.lines.map(l => `<tr><td>${esc(l.name)}</td><td>${esc(qLabel(l.quality_key))}</td><td>${esc(locName(l.location_id))}</td>
+        <td class="num">−${fmt(-l.delta)}${unitTxt(l.unit) || " objets"}</td><td class="num">${fmt(l.before)} → ${fmt(l.after)}</td></tr>`).join("")}</tbody></table>
+      <div class="row"><button type="button" class="primary" id="bpCraftGo">Confirmer le retrait</button><button type="button" id="bpCraftNo">Annuler</button></div>
+      <p class="muted" style="font-size:12px">Chaque retrait pourra être annulé depuis l'historique, comme un mouvement ordinaire.</p>`;
+  } catch (err) { box.innerHTML = `<p class="err">${esc(errText(err))}</p>`; }
+});
+$("#bpCraftPreview").addEventListener("click", async e => {
+  if (e.target.id === "bpCraftNo") { $("#bpCraftPreview").hidden = true; bp.craftPlan = null; return; }
+  if (e.target.id !== "bpCraftGo" || !bp.craftPlan) return;
+  e.target.disabled = true;
+  try {
+    const r = await rpc("craft_blueprint", { p: bp.craftPlan });
+    bp.craftPlan = null;
+    $("#bpCraftPreview").innerHTML = `<p class="ok">Fabrication enregistrée${r.replayed ? " (déjà enregistrée)" : ""} : ${r.lines.length} lot${r.lines.length > 1 ? "s retirés" : " retiré"} (${esc(r.note)}).</p>`;
+    await loadStocks(); renderBpDetail(); loadMyMoves && loadMyMoves();
+    $("#bpCraftPreview").hidden = false;
+  } catch (err) {
+    const m = errText(err);
+    $("#bpCraftPreview").insertAdjacentHTML("beforeend", `<p class="err">${esc(/STATE_CHANGED/.test(m) ? "Ton stock a changé depuis l'aperçu : clique de nouveau sur « J'ai fabriqué » pour recalculer." : m)}</p>`);
+    e.target.disabled = false;
+  }
+});
 function renderBpDetail() {
   const b = bp.list.find(x => x.id === bp.open);
   $("#bpDetail").hidden = !b; if (!b) return;
@@ -3072,6 +3119,7 @@ function renderBpDetail() {
   const wanted = ings.map(i => { const t = target(i.slot_key); return t == null || i.min_quality == null ? i : { ...i, min_quality: Math.max(i.min_quality, t) }; });
   const v = BlueprintLogic.compare(wanted, bpStocks(), bp.map, { tier, crafts });
   const max = v.craftable === null ? null : BlueprintLogic.maxCrafts(wanted, bpStocks(), bp.map, { tier });
+  renderCraftBox(b, wanted, tier, crafts);
   $("#bpTitle").textContent = b.output_name || b.key;
   $("#bpMeta").innerHTML = `${esc(b.output_type_label || "")}${b.craft_time_seconds ? " · fabrication " + esc(craftTxt(b.craft_time_seconds)) : ""} · version ${esc(b.game_version || "?")} · <span class="num">${esc(b.key)}</span>${b.web_url ? ` · <a href="${esc(b.web_url)}" target="_blank" rel="noopener">fiche</a>` : ""}`;
   $("#bpMine").checked = bpOwners(b).includes(st.me && st.me.id);

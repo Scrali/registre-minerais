@@ -174,5 +174,38 @@
     return out;
   }
 
-  root.BlueprintLogic = { modifierAt, modifiersBySlot, compare, maxCrafts, slotsOf, inUnit: (q, u, w) => { const v = inUnit(q, u, w); return v == null ? null : fromMicro(v); } };
+  // Plan de fabrication : lots exacts à retirer (lieu, ressource, qualité, unité) pour les matières retenues par
+  // compare(), en prenant pour chaque demande le lot suffisant le plus faible (comme allocate). Quantités dans l'unité
+  // du stock. ok = false si une matière manque ou n'est pas reliée : rien n'est alors proposé.
+  function craftPlan(ingredients, stocks, map, { tier = 0, crafts = 1 } = {}) {
+    const v = compare(ingredients, stocks, map, { tier, crafts });
+    if (v.craftable !== true) return { ok: false, lines: [], verdict: v };
+    const lots = stocks.map(s => ({ s, q: qOf(s.quality_key), left: Number(s.quantity) || 0 })).filter(l => l.left > 0);
+    const demands = [];
+    for (const sl of v.slots) for (const i of sl.chosen) { const o = sl.options[i]; if (o.resource_id && o.need) demands.push(o); }
+    demands.sort((a, b) => (b.min_quality ?? -1) - (a.min_quality ?? -1));
+    const take = new Map();
+    for (const d of demands) {
+      let need = d.need;   // en millionièmes de l'unité de la recette
+      const mine = lots.filter(l => l.s.resource_id === d.resource_id && accepts(d.min_quality, l.q) && inUnit(1, l.s.unit || "", d.unit) != null)
+        .sort((a, b) => (a.q ?? -1) - (b.q ?? -1));
+      for (const l of mine) {
+        if (need <= 0) break;
+        const per = inUnit(1, l.s.unit || "", d.unit);                 // 1 unité du stock = per millionièmes de la recette
+        const availMicro = Math.round(l.left * per);
+        if (availMicro <= 0) continue;
+        const t = Math.min(need, availMicro);
+        const inStock = Math.round(t / per * M) / M;
+        l.left = Math.round((l.left - inStock) * M) / M; need -= t;
+        const k = [l.s.location_id, l.s.resource_id, l.s.quality_key, l.s.unit || ""].join("|");
+        const cur = take.get(k) || { location_id: l.s.location_id, resource_id: l.s.resource_id, quality_key: l.s.quality_key,
+          unit: l.s.unit || "", quantity: 0, expected_before: Number(l.s.quantity) || 0 };
+        cur.quantity = Math.round((cur.quantity + inStock) * M) / M; take.set(k, cur);
+      }
+      if (need > 0) return { ok: false, lines: [], verdict: v };
+    }
+    return { ok: true, lines: [...take.values()].filter(l => l.quantity > 0), verdict: v };
+  }
+
+  root.BlueprintLogic = { craftPlan, modifierAt, modifiersBySlot, compare, maxCrafts, slotsOf, inUnit: (q, u, w) => { const v = inUnit(q, u, w); return v == null ? null : fromMicro(v); } };
 })(typeof globalThis !== "undefined" ? globalThis : window);
